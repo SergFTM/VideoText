@@ -5,5 +5,6 @@ All logic lives in assistant/core/. Adding a new persona means adding one file h
 
 from .base import BasePersona
 from .platform import PlatformPersona
+from .editor import EditorPersona
 
-__all__ = ["BasePersona", "PlatformPersona"]
+__all__ = ["BasePersona", "PlatformPersona", "EditorPersona"]
