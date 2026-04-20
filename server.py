@@ -934,6 +934,7 @@ class AssistantChatRequest(BaseModel):
 async def assistant_chat(req: AssistantChatRequest):
     """Stream the assistant answer via Server-Sent Events (one JSON per `data:` line)."""
     from assistant.core.chat import Assistant
+    from assistant.personas.platform import PlatformPersona
 
     settings = await asyncio.to_thread(get_all_settings)
     provider = req.provider or settings.get("assistant_provider") or "openai"
@@ -946,6 +947,7 @@ async def assistant_chat(req: AssistantChatRequest):
     use_cache = bool(settings.get("assistant_cache_enabled", True))
 
     assistant = Assistant(
+        PlatformPersona(),
         provider=provider, model=model,
         use_cache=use_cache, cache_threshold=cache_thr,
     )
