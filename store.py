@@ -1,0 +1,756 @@
+"""Thin sync wrapper around the async Prisma client.
+
+All DB access goes through here. If you need to swap SQLite → Postgres later,
+the only thing that changes is `prisma/schema.prisma`'s datasource.
+"""
+import asyncio
+import json
+from datetime import datetime, timedelta
+from typing import Any
+
+from prisma import Prisma
+
+# Per-1M-token pricing (USD). Keep in sync with CLAUDE.md + pricing pages.
+_PRICING: dict[str, tuple[float, float]] = {
+    "claude-opus-4-7":   (5.0, 25.0),
+    "claude-opus-4-6":   (5.0, 25.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-haiku-4-5":  (1.0, 5.0),
+}
+
+
+def calculate_cost(model: str, usage: dict) -> float | None:
+    """USD cost with cache-write 1.25× and cache-read 0.10× multipliers."""
+    if model not in _PRICING:
+        return None
+    in_price, out_price = _PRICING[model]
+    effective_in = (
+        usage.get("input_tokens", 0)
+        + usage.get("cache_creation_input_tokens", 0) * 1.25
+        + usage.get("cache_read_input_tokens", 0) * 0.10
+    )
+    return (effective_in * in_price + usage.get("output_tokens", 0) * out_price) / 1_000_000
+
+
+async def _upsert_video_and_segments(transcript) -> None:
+    db = Prisma()
+    await db.connect()
+    try:
+        vid = transcript.video_id
+        url = f"https://www.youtube.com/watch?v={vid}"
+        await db.video.upsert(
+            where={"id": vid},
+            data={
+                "create": {
+                    "id": vid, "url": url,
+                    "title": transcript.title or None,
+                    "duration": transcript.duration or None,
+                    "language": transcript.language,
+                    "source": transcript.source,
+                },
+                "update": {
+                    "title": transcript.title or None,
+                    "duration": transcript.duration or None,
+                    "language": transcript.language,
+                    "source": transcript.source,
+                },
+            },
+        )
+        # Rewrite segments: simpler than diffing. Cascade already covers cleanup if Video is deleted.
+        await db.segment.delete_many(where={"videoId": vid})
+        if transcript.segments:
+            await db.segment.create_many(
+                data=[
+                    {"videoId": vid, "index": i, "start": s.start, "end": s.end, "text": s.text}
+                    for i, s in enumerate(transcript.segments)
+                ]
+            )
+    finally:
+        await db.disconnect()
+
+
+async def _insert_brief(
+    video_id: str,
+    model: str,
+    language: str,
+    fmt: str,
+    content_md: str,
+    content_json: str | None,
+    usage: dict,
+    cost_usd: float | None,
+) -> int:
+    db = Prisma()
+    await db.connect()
+    try:
+        brief = await db.brief.create(
+            data={
+                "videoId": video_id,
+                "model": model,
+                "language": language,
+                "format": fmt,
+                "contentMd": content_md,
+                "contentJson": content_json,
+                "inputTokens": usage.get("input_tokens", 0),
+                "outputTokens": usage.get("output_tokens", 0),
+                "cacheReadTokens": usage.get("cache_read_input_tokens", 0),
+                "cacheWriteTokens": usage.get("cache_creation_input_tokens", 0),
+                "costUsd": cost_usd,
+            }
+        )
+        return brief.id
+    finally:
+        await db.disconnect()
+
+
+async def _log_run(
+    url: str,
+    video_id: str | None,
+    status: str,
+    error: str | None,
+    triggered_by: str,
+    started_at: datetime,
+) -> int:
+    db = Prisma()
+    await db.connect()
+    try:
+        run = await db.run.create(
+            data={
+                "url": url, "videoId": video_id, "status": status,
+                "error": error, "triggeredBy": triggered_by,
+                "startedAt": started_at, "finishedAt": datetime.now(),
+            }
+        )
+        return run.id
+    finally:
+        await db.disconnect()
+
+
+async def _find_matching_brief(
+    video_id: str, model: str, language: str, fmt: str
+) -> Any:
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.brief.find_first(
+            where={
+                "videoId": video_id, "model": model,
+                "language": language, "format": fmt,
+            },
+            order={"createdAt": "desc"},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _query_video(video_id: str, with_segments: bool = False) -> Any:
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.video.find_unique(
+            where={"id": video_id},
+            include={
+                "briefs": True,
+                "segments": {"order_by": {"index": "asc"}} if with_segments else False,
+            },
+        )
+    finally:
+        await db.disconnect()
+
+
+# ─── Sync entrypoints — callers don't need to know about asyncio ─────
+
+def save_transcript(transcript) -> None:
+    asyncio.run(_upsert_video_and_segments(transcript))
+
+
+def save_brief(video_id, model, language, fmt, content_md, content_json, usage) -> tuple[int, float | None]:
+    cost = calculate_cost(model, usage)
+    brief_id = asyncio.run(_insert_brief(
+        video_id, model, language, fmt, content_md, content_json, usage, cost
+    ))
+    return brief_id, cost
+
+
+def log_run(url: str, video_id: str | None, status: str, error: str | None,
+            triggered_by: str, started_at: datetime) -> int:
+    return asyncio.run(_log_run(url, video_id, status, error, triggered_by, started_at))
+
+
+def get_video(video_id: str, with_segments: bool = False):
+    return asyncio.run(_query_video(video_id, with_segments=with_segments))
+
+
+def find_matching_brief(video_id: str, model: str, language: str, fmt: str):
+    return asyncio.run(_find_matching_brief(video_id, model, language, fmt))
+
+
+# ─── Phase 1: live streams ─────────────────────────────────────────
+
+async def _create_stream(data: dict):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.livestream.create(data=data)
+    finally:
+        await db.disconnect()
+
+
+async def _list_streams(status: str | None = None):
+    db = Prisma()
+    await db.connect()
+    try:
+        where = {"status": status} if status else {}
+        return await db.livestream.find_many(
+            where=where,
+            order={"createdAt": "desc"},
+            # Pull all chunks so we can compute latest + status counts client-side.
+            # Cheap for typical workloads (1-2 streams × 30-300 chunks).
+            include={"chunks": {"order_by": {"index": "desc"}}},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _get_stream(stream_id: str, with_chunks: bool = False):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.livestream.find_unique(
+            where={"id": stream_id},
+            include={
+                "chunks": {"order_by": {"index": "asc"}} if with_chunks else False,
+                "newsItems": True,
+                "streamBriefs": {"order_by": {"createdAt": "desc"}},
+            },
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _update_stream_status(stream_id: str, status: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        await db.livestream.update(where={"id": stream_id}, data={"status": status})
+    finally:
+        await db.disconnect()
+
+
+async def _update_stream_fields(stream_id: str, data: dict):
+    """Update arbitrary mutable fields. Ignores unknown keys."""
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.livestream.update(where={"id": stream_id}, data=data)
+    finally:
+        await db.disconnect()
+
+
+async def _next_chunk_index(stream_id: str) -> int:
+    db = Prisma()
+    await db.connect()
+    try:
+        last = await db.chunk.find_first(
+            where={"streamId": stream_id},
+            order={"index": "desc"},
+        )
+        return (last.index + 1) if last else 0
+    finally:
+        await db.disconnect()
+
+
+async def _save_chunk(stream_id: str, index: int, started_at: datetime,
+                      duration_sec: float, audio_path: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.chunk.create(data={
+            "streamId": stream_id, "index": index, "startedAt": started_at,
+            "durationSec": duration_sec, "audioPath": audio_path,
+            "status": "pending",
+        })
+    finally:
+        await db.disconnect()
+
+
+async def _update_chunk(chunk_id: str, **fields):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.chunk.update(where={"id": chunk_id}, data=fields)
+    finally:
+        await db.disconnect()
+
+
+async def _get_pending_chunks(status: str, limit: int = 10):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.chunk.find_many(
+            where={"status": status},
+            order={"createdAt": "asc"},
+            take=limit,
+            include={"stream": True},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _insert_news_items(
+    stream_id: str, chunk_id: str, items: list[dict], attribution: str
+):
+    db = Prisma()
+    await db.connect()
+    try:
+        if not items:
+            return 0
+        await db.newsitem.create_many(data=[
+            {
+                "streamId": stream_id, "chunkId": chunk_id,
+                "headline": it["headline"], "quote": it["quote"],
+                "category": it.get("category"),
+                "offsetSec": float(it.get("offset_sec", 0)),
+                "confidence": float(it.get("confidence", 0.5)),
+                "tags": json.dumps(it.get("tags", []), ensure_ascii=False),
+                "attribution": attribution,
+                "status": "draft",
+            }
+            for it in items
+        ])
+        return len(items)
+    finally:
+        await db.disconnect()
+
+
+async def _list_news_items(
+    stream_id: str | None = None, status: str | None = None, limit: int = 200
+):
+    db = Prisma()
+    await db.connect()
+    try:
+        where: dict = {}
+        if stream_id:
+            where["streamId"] = stream_id
+        if status:
+            where["status"] = status
+        return await db.newsitem.find_many(
+            where=where, order={"createdAt": "desc"}, take=limit,
+            include={"stream": True},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _update_news_item_status(item_id: int, status: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.newsitem.update(
+            where={"id": item_id}, data={"status": status}
+        )
+    finally:
+        await db.disconnect()
+
+
+# ─── Sync wrappers for Phase 1 ─────────────────────────────────────
+
+def create_stream(**kwargs):
+    return asyncio.run(_create_stream(kwargs))
+
+
+def list_streams(status: str | None = None):
+    return asyncio.run(_list_streams(status))
+
+
+def get_stream(stream_id: str, with_chunks: bool = False):
+    return asyncio.run(_get_stream(stream_id, with_chunks=with_chunks))
+
+
+def update_stream_status(stream_id: str, status: str):
+    return asyncio.run(_update_stream_status(stream_id, status))
+
+
+def update_stream_fields(stream_id: str, data: dict):
+    return asyncio.run(_update_stream_fields(stream_id, data))
+
+
+def next_chunk_index(stream_id: str) -> int:
+    return asyncio.run(_next_chunk_index(stream_id))
+
+
+def save_chunk(stream_id: str, index: int, started_at, duration_sec: float, audio_path: str):
+    return asyncio.run(_save_chunk(stream_id, index, started_at, duration_sec, audio_path))
+
+
+def update_chunk(chunk_id: str, **fields):
+    return asyncio.run(_update_chunk(chunk_id, **fields))
+
+
+def get_pending_chunks(status: str, limit: int = 10):
+    return asyncio.run(_get_pending_chunks(status, limit))
+
+
+def insert_news_items(stream_id: str, chunk_id: str, items: list[dict], attribution: str):
+    return asyncio.run(_insert_news_items(stream_id, chunk_id, items, attribution))
+
+
+def list_news_items(stream_id: str | None = None, status: str | None = None, limit: int = 200):
+    return asyncio.run(_list_news_items(stream_id, status, limit))
+
+
+def update_news_item_status(item_id: int, status: str):
+    return asyncio.run(_update_news_item_status(item_id, status))
+
+
+# ─── App settings (key/value) ──────────────────────────────────────
+
+# Defaults baked in. UI loads these, user overrides persist in DB.
+DEFAULT_SETTINGS: dict[str, Any] = {
+    # Form defaults
+    "default_brief_model":          "",               # "" = env CLAUDE_MODEL or sonnet-4-6
+    "default_brief_lang":           "ru",
+    "default_brief_format":         "markdown",
+    "default_backend":              "auto",
+    "default_whisper_model":        "medium",
+    "default_stream_interval_min":  5,
+    "default_brief_template":       "news",
+    "default_auto_brief_on_stop":   False,
+    # Retention policy (0 = forever, > 0 = days to keep)
+    "retain_chunk_audio_days":        7,   # MP3 files in ./chunks/
+    "retain_chunk_row_days":          0,   # Chunk DB rows (with transcripts) — default forever
+    "retain_news_item_days":          0,   # forever
+    "retain_stream_brief_days":       0,   # forever
+    "retain_video_output_files_days": 30,  # ./output/ files from single-video briefs
+    "retain_failed_chunks_days":      3,   # aggressive cleanup of failed chunks
+    "cleanup_auto_enabled":           False,  # master switch for periodic cleaner
+    "cleanup_interval_hours":         6,
+    # Semantic dedup of news items (fastembed local | ollama | openai-compat | none)
+    "dedup_enabled":                True,
+    "dedup_embedding_provider":     "fastembed",
+    "dedup_embedding_model":        "",        # provider default if empty
+    "dedup_window_hours":           24,
+    "dedup_similarity_threshold":   0.85,
+    # News enrichment (expanded text + illustration via OpenAI + stock photos)
+    "enrich_text_model":            "gpt-4o-mini",     # gpt-4o | gpt-4o-mini | gpt-4-turbo | o1-mini
+    "enrich_image_model":           "dall-e-3",        # dall-e-3 | dall-e-3-hd | gpt-image-1 | dall-e-2
+    "enrich_image_source":          "hybrid",          # generate (pure AI) | stock (Pexels) | hybrid (stock+AI edit)
+    "enrich_auto_on_approve":       False,             # auto-enrich when a draft is approved
+    "enrich_image_enabled":         True,              # can disable image-gen to save $
+    "enrich_image_dedup_threshold": 0.88,              # cosine for concept-phrase reuse
+    # AI Assistant (operational helper — answers "how to configure X", executes tools)
+    "assistant_provider":           "openai",          # openai | anthropic | ollama
+    "assistant_model":              "gpt-4o",          # gpt-4o | gpt-4o-mini | claude-sonnet-4-6 | llama3.1:8b | ...
+    "assistant_cache_enabled":      True,              # reuse prior answers via fastembed similarity
+    "assistant_cache_similarity":   0.85,              # threshold 0.0-1.0
+    "assistant_auto_confirm_writes": False,            # if True, writes don't require explicit user OK (risky)
+}
+
+
+async def _get_all_settings() -> dict:
+    db = Prisma()
+    await db.connect()
+    try:
+        rows = await db.appsetting.find_many()
+        result = dict(DEFAULT_SETTINGS)
+        for r in rows:
+            try:
+                result[r.key] = json.loads(r.value)
+            except json.JSONDecodeError:
+                result[r.key] = r.value
+        return result
+    finally:
+        await db.disconnect()
+
+
+async def _set_settings(updates: dict) -> dict:
+    """Upsert each key. Unknown keys are accepted to remain flexible."""
+    db = Prisma()
+    await db.connect()
+    try:
+        for key, value in updates.items():
+            encoded = json.dumps(value, ensure_ascii=False)
+            await db.appsetting.upsert(
+                where={"key": key},
+                data={"create": {"key": key, "value": encoded}, "update": {"value": encoded}},
+            )
+        return await _get_all_settings_inner(db)
+    finally:
+        await db.disconnect()
+
+
+async def _get_all_settings_inner(db: Prisma) -> dict:
+    """Reuse-friendly version that takes an open connection."""
+    rows = await db.appsetting.find_many()
+    result = dict(DEFAULT_SETTINGS)
+    for r in rows:
+        try:
+            result[r.key] = json.loads(r.value)
+        except json.JSONDecodeError:
+            result[r.key] = r.value
+    return result
+
+
+def get_all_settings() -> dict:
+    return asyncio.run(_get_all_settings())
+
+
+def set_settings(updates: dict) -> dict:
+    return asyncio.run(_set_settings(updates))
+
+
+# ─── Stream briefs ─────────────────────────────────────────────────
+
+async def _save_stream_brief(
+    stream_id: str, template: str, content_md: str, content_json: str | None,
+    model: str, usage: dict, cost_usd: float | None, chunks_covered: int,
+):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.streambrief.create(data={
+            "streamId": stream_id, "template": template,
+            "contentMd": content_md, "contentJson": content_json,
+            "model": model,
+            "inputTokens": usage.get("input_tokens", 0),
+            "outputTokens": usage.get("output_tokens", 0),
+            "cacheReadTokens": usage.get("cache_read_input_tokens", 0),
+            "cacheWriteTokens": usage.get("cache_creation_input_tokens", 0),
+            "costUsd": cost_usd,
+            "chunksCovered": chunks_covered,
+        })
+    finally:
+        await db.disconnect()
+
+
+async def _list_stream_briefs(stream_id: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.streambrief.find_many(
+            where={"streamId": stream_id},
+            order={"createdAt": "desc"},
+        )
+    finally:
+        await db.disconnect()
+
+
+def save_stream_brief(stream_id: str, template: str, content_md: str, content_json: str | None,
+                     model: str, usage: dict, cost_usd: float | None, chunks_covered: int):
+    return asyncio.run(_save_stream_brief(
+        stream_id, template, content_md, content_json, model, usage, cost_usd, chunks_covered
+    ))
+
+
+def list_stream_briefs(stream_id: str):
+    return asyncio.run(_list_stream_briefs(stream_id))
+
+
+# ─── Dedup support ─────────────────────────────────────────────────
+
+async def _list_items_by_chunk(chunk_id: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.newsitem.find_many(
+            where={"chunkId": chunk_id}, order={"id": "desc"}
+        )
+    finally:
+        await db.disconnect()
+
+
+def _list_chunk_news_items(chunk_id: str):
+    return asyncio.run(_list_items_by_chunk(chunk_id))
+
+
+async def _load_recent_embeddings(
+    stream_id: str | None, hours: int
+) -> list[tuple[int, list[float]]]:
+    """Fetch (id, embedding) pairs from news items within `hours` window, optionally
+    scoped to one stream. Skips rows without embeddings."""
+    db = Prisma()
+    await db.connect()
+    try:
+        cutoff = datetime.now() - timedelta(hours=max(1, hours))
+        where: dict = {"createdAt": {"gt": cutoff}, "NOT": [{"embedding": None}]}
+        if stream_id:
+            where["streamId"] = stream_id
+        rows = await db.newsitem.find_many(where=where)
+        out: list[tuple[int, list[float]]] = []
+        for r in rows:
+            if not r.embedding:
+                continue
+            try:
+                vec = json.loads(r.embedding)
+                if isinstance(vec, list) and vec:
+                    out.append((r.id, vec))
+            except json.JSONDecodeError:
+                continue
+        return out
+    finally:
+        await db.disconnect()
+
+
+async def _update_news_item_dedup_link(
+    item_id: int, embedding: list[float] | None,
+    duplicate_of_id: int | None, similarity: float | None,
+):
+    db = Prisma()
+    await db.connect()
+    try:
+        data = {
+            "embedding": json.dumps(embedding) if embedding is not None else None,
+            "duplicateOfId": duplicate_of_id,
+            "duplicateSim": similarity,
+        }
+        await db.newsitem.update(where={"id": item_id}, data=data)
+    finally:
+        await db.disconnect()
+
+
+def load_recent_embeddings(stream_id: str | None, hours: int):
+    return asyncio.run(_load_recent_embeddings(stream_id, hours))
+
+
+def update_news_item_dedup(item_id: int, embedding, duplicate_of_id, similarity):
+    return asyncio.run(
+        _update_news_item_dedup_link(item_id, embedding, duplicate_of_id, similarity)
+    )
+
+
+# ─── Enrichment (expanded text + image) ───────────────────────────
+
+async def _get_news_item(item_id: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.newsitem.find_unique(
+            where={"id": item_id},
+            include={"image": True, "stream": True},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _find_similar_image(
+    concept_embedding: list[float], threshold: float
+) -> dict | None:
+    db = Prisma()
+    await db.connect()
+    try:
+        images = await db.newsimage.find_many()
+        best: tuple[float, Any] | None = None
+        for img in images:
+            if not img.conceptEmbedding:
+                continue
+            try:
+                emb = json.loads(img.conceptEmbedding)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(emb, list) or not emb:
+                continue
+            # Cosine similarity inline (avoids importing from dedup here)
+            import math
+            dot = sum(a * b for a, b in zip(concept_embedding, emb))
+            na = math.sqrt(sum(a * a for a in concept_embedding))
+            nb = math.sqrt(sum(b * b for b in emb))
+            sim = (dot / (na * nb)) if na and nb else 0.0
+            if sim >= threshold and (best is None or sim > best[0]):
+                best = (sim, img)
+        if best:
+            sim, img = best
+            return {"id": img.id, "path": img.filePath, "sim": sim,
+                    "concept": img.conceptPhrase}
+        return None
+    finally:
+        await db.disconnect()
+
+
+async def _create_news_image(
+    concept: str, embedding: list[float], prompt: str,
+    file_path: str, model: str, cost_usd: float,
+) -> int:
+    db = Prisma()
+    await db.connect()
+    try:
+        img = await db.newsimage.create(data={
+            "conceptPhrase": concept,
+            "conceptEmbedding": json.dumps(embedding) if embedding else None,
+            "prompt": prompt,
+            "filePath": file_path,
+            "model": model,
+            "costUsd": cost_usd,
+        })
+        return img.id
+    finally:
+        await db.disconnect()
+
+
+async def _increment_image_reuse(image_id: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        img = await db.newsimage.find_unique(where={"id": image_id})
+        if img:
+            await db.newsimage.update(
+                where={"id": image_id},
+                data={"reuseCount": (img.reuseCount or 0) + 1},
+            )
+    finally:
+        await db.disconnect()
+
+
+async def _update_news_item_enrichment(
+    item_id: int, expanded_text: str, expanded_model: str,
+    expanded_cost: float, image_id: int | None,
+):
+    db = Prisma()
+    await db.connect()
+    try:
+        await db.newsitem.update(
+            where={"id": item_id},
+            data={
+                "expandedText": expanded_text,
+                "expandedModel": expanded_model,
+                "expandedCostUsd": expanded_cost,
+                "imageId": image_id,
+            },
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _list_news_images(limit: int = 100):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.newsimage.find_many(
+            order={"createdAt": "desc"}, take=limit,
+        )
+    finally:
+        await db.disconnect()
+
+
+def get_news_item(item_id: int):
+    return asyncio.run(_get_news_item(item_id))
+
+
+def find_similar_image(concept_embedding: list[float], threshold: float):
+    return asyncio.run(_find_similar_image(concept_embedding, threshold))
+
+
+def create_news_image(concept, embedding, prompt, file_path, model, cost_usd):
+    return asyncio.run(_create_news_image(concept, embedding, prompt, file_path, model, cost_usd))
+
+
+def increment_image_reuse(image_id: int):
+    return asyncio.run(_increment_image_reuse(image_id))
+
+
+def update_news_item_enrichment(item_id, expanded_text, expanded_model, expanded_cost, image_id):
+    return asyncio.run(_update_news_item_enrichment(
+        item_id, expanded_text, expanded_model, expanded_cost, image_id,
+    ))
+
+
+def list_news_images(limit: int = 100):
+    return asyncio.run(_list_news_images(limit))

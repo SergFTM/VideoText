@@ -1,0 +1,6 @@
+# One YouTube URL per line. Blank lines and # comments are ignored.
+# Run: python batch.py urls.example.txt --model opus --format json
+
+https://www.youtube.com/watch?v=mssPkDuQnmY
+# https://www.youtube.com/watch?v=<another>
+# https://youtu.be/<short-form>

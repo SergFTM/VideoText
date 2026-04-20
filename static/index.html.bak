@@ -1,0 +1,2754 @@
+<!doctype html>
+<html lang="ru" x-data="app()" x-cloak>
+<head>
+  <meta charset="utf-8" />
+  <title>VideoText</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://rsms.me/" />
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+          colors: { ink: { DEFAULT: '#0A0A0A', 600: '#525252', 500: '#737373', 400: '#A3A3A3', 300: '#D4D4D4', 200: '#E5E5E5', 100: '#F5F5F5', 50: '#FAFAFA' } },
+        },
+      },
+    };
+  </script>
+  <style>
+    html { font-feature-settings: "cv02", "cv03", "cv04", "cv11"; -webkit-font-smoothing: antialiased; }
+    [x-cloak] { display: none !important; }
+    .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-feature-settings: "zero"; }
+    .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #737373; font-weight: 500; }
+    .prose h2 { margin-top: 1.5rem; margin-bottom: .4rem; font-weight: 600; font-size: 0.95rem; color: #0A0A0A; letter-spacing: -0.01em; }
+    .prose h2:first-child { margin-top: 0; }
+    .prose ul { margin: .3rem 0 .5rem 1.1rem; list-style: disc; }
+    .prose li { margin-bottom: .2rem; line-height: 1.55; }
+    .prose p { margin-bottom: .6rem; line-height: 1.6; color: #262626; }
+    .prose strong { color: #0A0A0A; font-weight: 600; }
+    .scroll-thin::-webkit-scrollbar { width: 4px; height: 4px; }
+    .scroll-thin::-webkit-scrollbar-thumb { background: #D4D4D4; border-radius: 2px; }
+    .scroll-thin::-webkit-scrollbar-track { background: transparent; }
+    .divider { height: 1px; background: #E5E5E5; }
+    button { transition: all 120ms ease; }
+    input, select { transition: border-color 120ms ease; }
+    input:focus, select:focus { outline: none; border-color: #0A0A0A; }
+  </style>
+</head>
+<body class="font-sans bg-white text-ink antialiased">
+
+<!-- HEADER ─────────────────────────────────────────────────── -->
+<!-- LEFT SIDEBAR — Linear/Vercel-style nav ─────────────────── -->
+<aside class="fixed left-0 top-0 bottom-0 w-60 bg-white border-r border-ink-200 flex flex-col z-20">
+  <div class="px-5 py-5 flex items-center gap-2 border-b border-ink-100">
+    <div class="w-6 h-6 rounded bg-ink text-white flex items-center justify-center text-[11px] font-bold">V</div>
+    <span class="text-[14px] font-semibold tracking-tight">VideoText</span>
+  </div>
+
+  <nav class="flex-1 p-3 space-y-0.5">
+    <template x-for="tab in tabs" :key="tab.id">
+      <button @click="setView(tab.id)"
+              class="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md text-[13px] transition-colors"
+              :class="activeView === tab.id
+                ? 'bg-ink-100 text-ink font-medium'
+                : 'text-ink-600 hover:bg-ink-50 hover:text-ink'">
+        <span class="flex items-center gap-2.5">
+          <span class="w-4 h-4 flex items-center justify-center" x-html="tab.icon"></span>
+          <span x-text="tab.label"></span>
+        </span>
+        <span x-show="tabBadge(tab.id)"
+              class="text-[10px] mono px-1.5 py-0.5 rounded"
+              :class="activeView === tab.id ? 'bg-white text-ink-600' : 'bg-ink-100 text-ink-500'"
+              x-text="tabBadge(tab.id)"></span>
+      </button>
+    </template>
+  </nav>
+
+  <div class="px-5 py-4 border-t border-ink-100 space-y-2 text-[11px]">
+    <div class="flex items-center justify-between">
+      <span class="flex items-center gap-1.5 text-ink-500">
+        <span :class="config.supadata ? 'bg-emerald-500' : 'bg-ink-300'" class="w-1.5 h-1.5 rounded-full"></span>
+        Supadata
+      </span>
+      <span :class="config.supadata ? 'text-ink-500' : 'text-ink-400'" x-text="config.supadata ? 'ok' : '—'"></span>
+    </div>
+    <div class="flex items-center justify-between">
+      <span class="flex items-center gap-1.5 text-ink-500">
+        <span :class="config.anthropic ? 'bg-emerald-500' : 'bg-ink-300'" class="w-1.5 h-1.5 rounded-full"></span>
+        Anthropic
+      </span>
+      <span :class="config.anthropic ? 'text-ink-500' : 'text-ink-400'" x-text="config.anthropic ? 'ok' : '—'"></span>
+    </div>
+    <a href="/docs" target="_blank" class="block text-ink-400 hover:text-ink pt-1">Swagger API ↗</a>
+  </div>
+</aside>
+
+<!-- TOP BAR — sticky, shows current view title + context actions ─── -->
+<header class="fixed top-0 left-60 right-0 h-12 border-b border-ink-200 bg-white/90 backdrop-blur z-20 flex items-center justify-between px-8">
+  <div class="flex items-center gap-2 text-[13px]">
+    <span class="text-ink-400">VideoText</span>
+    <span class="text-ink-300">/</span>
+    <span class="text-ink font-medium" x-text="currentTab.label"></span>
+  </div>
+  <div class="flex items-center gap-3 text-[12px] text-ink-500">
+    <span class="mono" x-show="activeView === 'news' && newsItems.length">
+      <span x-text="newsItems.length"></span> в ленте
+    </span>
+    <span class="mono" x-show="activeView === 'streams' && activeStreams.length">
+      <span x-text="activeStreams.length"></span> активн.
+    </span>
+  </div>
+</header>
+
+<main class="ml-60 pt-12 px-10 py-10 space-y-16 max-w-none"
+      :style="'padding-bottom:' + (logExpanded ? '300px' : '60px')">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: ВИДЕО ─────────────────────────────────────────────── -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div x-show="activeView === 'video'" x-cloak class="space-y-16 max-w-5xl mx-auto">
+
+  <!-- INPUT ────────────────────────────────────────────────────── -->
+  <section>
+    <div class="flex items-baseline justify-between mb-4">
+      <div class="label">ссылка</div>
+      <button @click="showHelp = !showHelp"
+              class="text-[11px] text-ink-500 hover:text-ink flex items-center gap-1">
+        <span x-text="showHelp ? 'скрыть' : 'как это работает'"></span>
+        <svg class="w-3 h-3 transition-transform" :class="{'rotate-180': showHelp}" viewBox="0 0 12 12" fill="currentColor"><path d="M6 8L2 4h8z"/></svg>
+      </button>
+    </div>
+    <div class="flex gap-2 mb-5">
+      <input
+        x-model="form.url"
+        @keydown.enter="run()"
+        type="text"
+        placeholder="https://www.youtube.com/watch?v=..."
+        title="Вставь полный URL видео с YouTube. Enter тоже запускает обработку."
+        class="flex-1 px-4 py-3 border border-ink-200 rounded-md text-[14px] mono bg-white placeholder:text-ink-400"
+      />
+      <button
+        @click="run()"
+        :disabled="busy || !form.url"
+        title="Запустить весь пайплайн: транскрипт → бриф → сохранить в БД"
+        class="px-6 py-3 bg-ink text-white rounded-md text-[13px] font-medium disabled:opacity-30 disabled:cursor-not-allowed hover:bg-ink-600"
+      >
+        <span x-show="!busy">запустить</span>
+        <span x-show="busy" class="inline-flex items-center gap-2">
+          <svg class="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-dasharray="32" stroke-dashoffset="8"></circle>
+          </svg>
+          работаю
+        </span>
+      </button>
+    </div>
+
+    <div class="flex flex-wrap gap-x-8 gap-y-3 text-[12px] text-ink-500">
+      <label class="flex items-center gap-2" title="Язык, на котором Claude напишет бриф. Транскрипт остаётся оригинальным — перевод не делается.">
+        <span>язык брифа</span>
+        <select x-model="form.brief_lang" class="border-0 border-b border-ink-200 bg-transparent text-ink pb-0.5 cursor-pointer">
+          <option value="ru">ru</option>
+          <option value="en">en</option>
+        </select>
+      </label>
+      <label class="flex items-center gap-2" title="Какая Claude-модель пишет бриф. Opus — лучшее качество и дороже. Sonnet — оптимум. Haiku — дёшево и быстро для простых задач.">
+        <span>модель</span>
+        <select x-model="form.model" class="border-0 border-b border-ink-200 bg-transparent text-ink pb-0.5 cursor-pointer">
+          <option value="">sonnet-4.6</option>
+          <option value="opus">opus-4.7</option>
+          <option value="sonnet">sonnet-4.6</option>
+          <option value="haiku">haiku-4.5</option>
+        </select>
+      </label>
+      <label class="flex items-center gap-2" title="markdown — готовая для чтения проза. json — структурированные поля со схемой, для дальнейшей автоматической обработки.">
+        <span>формат</span>
+        <select x-model="form.format" class="border-0 border-b border-ink-200 bg-transparent text-ink pb-0.5 cursor-pointer">
+          <option value="markdown">markdown</option>
+          <option value="json">json</option>
+        </select>
+      </label>
+      <label class="flex items-center gap-2" title="auto — умный порядок с fallback: если cookies есть, пробуем yt-dlp (бесплатно); если нет — Supadata. При неудаче первый → второй.  supadata / ytdlp — строго этот бэкенд, без fallback.">
+        <span>backend</span>
+        <select x-model="form.backend" class="border-0 border-b border-ink-200 bg-transparent text-ink pb-0.5 cursor-pointer">
+          <option value="auto">auto (с fallback)</option>
+          <option value="supadata">supadata</option>
+          <option value="ytdlp">yt-dlp</option>
+        </select>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer" title="Не вызывать Claude — только извлечь транскрипт и сохранить. Ноль затрат на API.">
+        <input type="checkbox" x-model="form.no_brief" class="accent-ink" />
+        <span>только транскрипт</span>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer" title="Игнорировать кэш БД: заново извлечь транскрипт и перегенерить бриф, даже если уже есть подходящая запись.">
+        <input type="checkbox" x-model="form.force_refresh" class="accent-ink" />
+        <span>обновить, даже если есть</span>
+      </label>
+    </div>
+
+    <!-- HELP PANEL ──────────────────────────────────────────────── -->
+    <div x-show="showHelp" x-transition.opacity class="mt-8 border-t border-ink-200 pt-8 space-y-10">
+
+      <!-- pipeline steps -->
+      <div>
+        <div class="label mb-4">пайплайн</div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-[13px]">
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="w-5 h-5 rounded-full bg-ink text-white text-[11px] flex items-center justify-center mono">1</span>
+              <span class="font-medium">Транскрипт</span>
+            </div>
+            <p class="text-ink-500 leading-relaxed">
+              YouTube URL → извлекаем субтитры через <span class="mono text-ink">Supadata API</span> (primary)
+              или <span class="mono text-ink">yt-dlp</span> (fallback). Возвращается текст с тайм-кодами.
+            </p>
+          </div>
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="w-5 h-5 rounded-full bg-ink text-white text-[11px] flex items-center justify-center mono">2</span>
+              <span class="font-medium">Бриф</span>
+            </div>
+            <p class="text-ink-500 leading-relaxed">
+              Транскрипт идёт в <span class="mono text-ink">Claude</span> с системным промптом и 2 few-shot примерами.
+              Результат — структурированный бриф: суть, идеи, факты, применение, черновик ТЗ.
+            </p>
+          </div>
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="w-5 h-5 rounded-full bg-ink text-white text-[11px] flex items-center justify-center mono">3</span>
+              <span class="font-medium">Сохранение</span>
+            </div>
+            <p class="text-ink-500 leading-relaxed">
+              Видео, сегменты, бриф и метрики (токены, стоимость, кэш) пишутся в локальный
+              <span class="mono text-ink">SQLite</span> через <span class="mono text-ink">Prisma</span>.
+              Файлы дублируются в <span class="mono text-ink">./output/</span>.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- controls reference -->
+      <div>
+        <div class="label mb-4">описания контролов</div>
+        <dl class="divide-y divide-ink-100 border-y border-ink-200 text-[13px]">
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">ссылка</dt>
+            <dd class="text-ink-600">Полный URL YouTube-видео. Поддерживает <span class="mono">youtube.com/watch?v=</span>, <span class="mono">youtu.be/</span>, shorts, embed, live. Enter тоже запускает обработку.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">запустить</dt>
+            <dd class="text-ink-600">Основная кнопка. Гоняет весь пайплайн: извлечение → бриф → БД. Занимает 5-15 секунд в зависимости от длины видео и модели.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">язык брифа</dt>
+            <dd class="text-ink-600">На каком языке Claude напишет бриф. Транскрипт не переводится — это язык только финального отчёта.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">модель</dt>
+            <dd class="text-ink-600">
+              <span class="mono">sonnet-4.6</span> — баланс качество/цена (~$0.07 на часовое видео).
+              <span class="mono">opus-4.7</span> — максимум качества (~$0.12).
+              <span class="mono">haiku-4.5</span> — быстро и дёшево (~$0.02) для простых брифов.
+            </dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">формат</dt>
+            <dd class="text-ink-600">
+              <span class="mono">markdown</span> — человеко-читаемая проза с заголовками.
+              <span class="mono">json</span> — структурированные поля со схемой (<span class="mono">tldr</span>, <span class="mono">key_ideas[]</span>, <span class="mono">software_brief</span> и т.д.) — удобно парсить кодом.
+            </dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">backend</dt>
+            <dd class="text-ink-600">
+              <span class="mono">auto</span> — умный порядок с fallback: если найден <span class="mono">cookies.txt</span> или выбран браузер, первым идёт yt-dlp (бесплатно); иначе — Supadata. При неудаче переключается на другой. Мы не можем заранее знать, сработает ли yt-dlp (YouTube рандомно блокирует), поэтому последовательность = «наиболее вероятно → запасной».
+              <span class="mono">supadata</span> / <span class="mono">ytdlp</span> — строго один бэкенд, без fallback. Используй если хочешь принудительно.
+            </dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">только транскрипт</dt>
+            <dd class="text-ink-600">Пропустить шаг брифа. Claude не вызывается, затрат на API нет — остаётся только транскрипт в БД и файлах.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">обновить, даже если есть</dt>
+            <dd class="text-ink-600">
+              По умолчанию «запустить» сначала ищет в БД: если видео и бриф с той же моделью/языком/форматом уже есть —
+              возвращает из кэша за <span class="mono">0</span> токенов. Эта галочка форсит заново: переизвлечь транскрипт
+              через Supadata/yt-dlp и перегенерить бриф через Claude. Нужно, если обновился сам ролик или ты поменял промпт.
+            </dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">копировать</dt>
+            <dd class="text-ink-600">Копирует текст брифа в буфер обмена (markdown-исходник, не rendered-HTML).</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">проверить (коннектор)</dt>
+            <dd class="text-ink-600">Smoke-тест API-ключа. Supadata — дёргает первое YouTube-видео (бесплатно). Anthropic — шлёт haiku-запрос на 10 токенов (~$0.00005).</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">история → открыть</dt>
+            <dd class="text-ink-600">Клик по строке подгружает ранее обработанное видео из БД (без повторного вызова Claude). Полезно, чтобы сравнить модели или форматы.</dd>
+          </div>
+        </dl>
+      </div>
+
+      <!-- cost & cache notes -->
+      <div>
+        <div class="label mb-4">стоимость и кэш</div>
+        <p class="text-[13px] text-ink-600 leading-relaxed">
+          Первый прогон новой модели/языка/формата пишет системный промпт в кэш Anthropic (примерно +25% к цене, одноразово).
+          Повторные прогоны в том же формате читают из кэша по ~10% цены.
+          Supadata тарифицируется отдельно на их стороне. Текущие расходы видны в строке под брифом и в колонке «total cost» в истории.
+        </p>
+      </div>
+
+    </div>
+
+  </section>
+
+  <!-- (log moved to a sticky bottom panel — see end of body) -->
+
+  <!-- TRANSCRIPT ─────────────────────────────────────────────── -->
+  <section>
+    <div class="flex items-baseline justify-between mb-1">
+      <div class="flex items-center gap-3">
+        <div class="label">расшифровка</div>
+        <span x-show="result.transcript_from_cache"
+              class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-ink-100 text-ink-600 rounded">
+          из БД
+        </span>
+      </div>
+      <div class="flex items-center gap-3 text-[12px] text-ink-500 mono" x-show="result.video_id">
+        <span x-show="result.backends_tried && result.backends_tried.length > 0"
+              :title="'Путь извлечения: ' + (result.backends_tried || []).join(' → ')"
+              x-text="(result.backends_tried || []).join(' → ')"></span>
+        <span x-show="result.source && !result.backends_tried?.length" x-text="result.source || ''"></span>
+        <span x-show="result.language">·</span>
+        <span x-text="result.language || ''"></span>
+        <span x-show="result.duration">·</span>
+        <span x-text="result.duration ? fmtDuration(result.duration) : ''"></span>
+        <span x-show="result.segments">·</span>
+        <span x-text="result.segments ? result.segments.length + ' сегм.' : ''"></span>
+      </div>
+    </div>
+    <p class="text-[12px] text-ink-400 mb-5">Текст видео с тайм-кодами. В БД и <span class="mono">.txt</span> — полностью, на экране — первые 400 сегментов.</p>
+
+    <template x-if="result.title">
+      <div class="mb-6">
+        <div class="text-[18px] font-semibold tracking-tight text-ink leading-snug" x-text="result.title"></div>
+        <div class="text-[12px] text-ink-400 mono mt-1" x-text="result.video_id"></div>
+      </div>
+    </template>
+
+    <template x-if="!result.video_id && !busy">
+      <p class="text-ink-400 text-[14px]">Пусто. Вставь ссылку выше и нажми «запустить».</p>
+    </template>
+    <template x-if="busy && !result.video_id">
+      <p class="text-ink-500 text-[14px]">Извлекаю транскрипт…</p>
+    </template>
+
+    <div x-show="result.segments" class="border-t border-ink-200 pt-5">
+      <div class="max-h-[50vh] overflow-y-auto scroll-thin pr-4 space-y-1 text-[13px]">
+        <template x-for="(seg, idx) in (result.segments || []).slice(0, 400)" :key="idx">
+          <div class="flex gap-4 leading-snug">
+            <span class="text-ink-400 mono text-[11px] w-14 shrink-0 pt-0.5" x-text="fmtTime(seg.start)"></span>
+            <span class="text-ink" x-text="seg.text"></span>
+          </div>
+        </template>
+        <div x-show="result.segments && result.segments.length > 400" class="text-[12px] text-ink-400 pt-3 italic">
+          показано 400 из <span x-text="result.segments.length"></span>. полный текст: <code class="mono" x-text="result.transcript_path"></code>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- BRIEF ──────────────────────────────────────────────────── -->
+  <section>
+    <div class="flex items-baseline justify-between mb-1">
+      <div class="flex items-center gap-3">
+        <div class="label">бриф</div>
+        <span x-show="result.from_cache"
+              class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-ink-100 text-ink-600 rounded">
+          из БД · 0 токенов
+        </span>
+      </div>
+      <div class="flex items-center gap-3 text-[12px]" x-show="result.brief">
+        <span class="text-ink-500 mono" x-text="result.model || ''"></span>
+        <span class="text-ink-400" x-show="result.cost_usd !== null && result.cost_usd !== undefined && !result.from_cache">·</span>
+        <span class="text-ink-500 mono" x-show="result.cost_usd !== null && result.cost_usd !== undefined && !result.from_cache">
+          $<span x-text="(result.cost_usd || 0).toFixed(4)"></span>
+        </span>
+        <button @click="copyBrief()" class="text-ink-500 hover:text-ink ml-2">копировать</button>
+      </div>
+    </div>
+    <p class="text-[12px] text-ink-400 mb-5">Структурированная выжимка через Claude: суть, ключевые идеи, факты, применение, черновик ТЗ.</p>
+
+    <template x-if="!result.brief && !busy">
+      <p class="text-ink-400 text-[14px]">Бриф появится после обработки видео.</p>
+    </template>
+    <template x-if="busy && result.video_id && !result.brief">
+      <p class="text-ink-500 text-[14px]">Генерирую бриф через Claude…</p>
+    </template>
+
+    <div x-show="result.brief" class="border-t border-ink-200 pt-5">
+      <article class="text-[14px] leading-relaxed">
+        <template x-for="sec in splitBriefSections(result.brief)" :key="sec.title">
+          <div class="mb-6">
+            <div class="flex items-baseline justify-between gap-3 mb-2 group">
+              <h3 class="text-[15px] font-semibold text-ink leading-snug" x-text="sec.title"></h3>
+              <div class="flex items-center gap-3 text-[11px] opacity-60 group-hover:opacity-100 transition-opacity">
+                <button @click="copySection(sec.title, sec.body)"
+                        class="text-ink-500 hover:text-ink"
+                        title="Скопировать эту секцию в буфер">копировать</button>
+                <template x-if="isSpecSection(sec.title)">
+                  <button @click="downloadSection(sec.title, sec.body, 'tz-' + (result.video_id || 'brief') + '.md')"
+                          class="text-ink-500 hover:text-ink"
+                          title="Скачать ТЗ как markdown-файл">скачать .md</button>
+                </template>
+              </div>
+            </div>
+            <div class="prose" x-html="renderMarkdown(sec.body)"></div>
+          </div>
+        </template>
+      </article>
+      <div x-show="result.brief_usage" class="mt-6 pt-4 border-t border-ink-100 mono text-[11px] text-ink-500 flex gap-5 flex-wrap">
+        <span>in <span class="text-ink" x-text="result.brief_usage?.input_tokens || 0"></span></span>
+        <span>out <span class="text-ink" x-text="result.brief_usage?.output_tokens || 0"></span></span>
+        <span x-show="result.brief_usage?.cache_read_input_tokens">
+          cache read <span class="text-ink" x-text="result.brief_usage?.cache_read_input_tokens || 0"></span>
+        </span>
+        <span x-show="result.brief_usage?.cache_creation_input_tokens">
+          cache write <span class="text-ink" x-text="result.brief_usage?.cache_creation_input_tokens || 0"></span>
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- HISTORY: videos only -->
+  <section>
+    <div class="flex items-baseline justify-between mb-1">
+      <div class="label">история видео</div>
+      <button @click="loadHistory()" class="text-[11px] text-ink-500 hover:text-ink">обновить</button>
+    </div>
+    <p class="text-[12px] text-ink-400 mb-5">Все обработанные видео из локальной БД. Клик — открыть без повторного вызова Claude.</p>
+    <div x-show="historyVideos.length === 0" class="text-ink-400 text-[14px]">Пока пусто.</div>
+    <div x-show="historyVideos.length > 0" class="border-y border-ink-200 divide-y divide-ink-100">
+      <template x-for="h in historyVideos" :key="h.id">
+        <button @click="loadVideo(h.id)"
+                class="w-full text-left py-4 grid grid-cols-[1fr_auto] gap-4 items-center hover:bg-ink-50 px-2 -mx-2 rounded">
+          <div class="min-w-0">
+            <div class="text-[14px] font-medium text-ink truncate" x-text="h.title"></div>
+            <div class="text-[11px] text-ink-400 mono mt-0.5 flex gap-3">
+              <span x-text="h.id"></span>
+              <span x-show="h.duration">·</span>
+              <span x-show="h.duration" x-text="fmtDuration(h.duration)"></span>
+              <span x-show="h.language">·</span>
+              <span x-show="h.language" x-text="h.language"></span>
+            </div>
+          </div>
+          <div class="text-[12px] mono text-ink-500 text-right shrink-0">
+            <div><span x-text="h.briefs_count"></span> бриф<span x-show="h.briefs_count !== 1">а</span></div>
+            <div x-show="h.total_cost" class="text-ink-400">$<span x-text="(h.total_cost || 0).toFixed(4)"></span></div>
+          </div>
+        </button>
+      </template>
+    </div>
+  </section>
+
+</div><!-- /TAB: ВИДЕО -->
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: СТРИМЫ ─────────────────────────────────────────────── -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div x-show="activeView === 'streams'" x-cloak class="space-y-16 max-w-5xl mx-auto">
+
+  <!-- LIVE STREAMS ───────────────────────────────────────────── -->
+  <section>
+    <div class="flex items-baseline justify-between mb-1 gap-3 flex-wrap">
+      <div class="label">прямые эфиры</div>
+      <div class="flex items-center gap-4">
+        <button @click="showStreamsHelp = !showStreamsHelp"
+                class="text-[11px] text-ink-500 hover:text-ink flex items-center gap-1">
+          <span x-text="showStreamsHelp ? 'скрыть' : 'как это работает'"></span>
+          <svg class="w-3 h-3 transition-transform" :class="{'rotate-180': showStreamsHelp}" viewBox="0 0 12 12" fill="currentColor"><path d="M6 8L2 4h8z"/></svg>
+        </button>
+        <button @click="toggleStreamForm()"
+                class="text-[11px] text-ink-500 hover:text-ink flex items-center gap-1">
+          <span x-text="showStreamForm ? (editingStreamId ? 'отменить редактирование' : 'закрыть') : 'запустить мониторинг'"></span>
+          <svg class="w-3 h-3 transition-transform" :class="{'rotate-45': showStreamForm}" viewBox="0 0 12 12" fill="currentColor"><path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.5"/></svg>
+        </button>
+      </div>
+    </div>
+    <p class="text-[12px] text-ink-400 mb-5">
+      Непрерывный захват YouTube live-эфира: режется на N-минутные чанки, локальный
+      faster-whisper (CUDA) расшифровывает, Claude вытягивает новостные утверждения.
+      Каждый item уходит в <span class="mono">draft</span>, пока ты не подтвердишь.
+    </p>
+
+    <!-- STREAMS HELP PANEL ──────────────────────────────────────── -->
+    <div x-show="showStreamsHelp" x-transition x-cloak class="mb-8 border-t border-b border-ink-200 py-8 space-y-10">
+
+      <div>
+        <div class="label mb-4">пайплайн стрима</div>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-5 text-[13px]">
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="w-5 h-5 rounded-full bg-ink text-white text-[11px] flex items-center justify-center mono">1</span>
+              <span class="font-medium">Захват</span>
+            </div>
+            <p class="text-ink-500 leading-relaxed">
+              <span class="mono text-ink">yt-dlp</span> получает HLS-поток, <span class="mono text-ink">ffmpeg</span>
+              режет его на MP3-чанки по N минут (из настроек). Чанк попадает в БД со статусом <span class="mono">pending</span>.
+            </p>
+          </div>
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="w-5 h-5 rounded-full bg-ink text-white text-[11px] flex items-center justify-center mono">2</span>
+              <span class="font-medium">Расшифровка</span>
+            </div>
+            <p class="text-ink-500 leading-relaxed">
+              <span class="mono text-ink">faster-whisper</span> на CUDA (RTX 2060) — ~30 сек на 2-мин чанк.
+              Статус меняется на <span class="mono">transcribed</span>, сохраняется текст + тайм-коды.
+            </p>
+          </div>
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="w-5 h-5 rounded-full bg-ink text-white text-[11px] flex items-center justify-center mono">3</span>
+              <span class="font-medium">Новости</span>
+            </div>
+            <p class="text-ink-500 leading-relaxed">
+              <span class="mono text-ink">Claude</span> с news-промптом извлекает утверждения
+              (headline, quote, category, confidence, tags). Статус чанка → <span class="mono">extracted</span>.
+            </p>
+          </div>
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="w-5 h-5 rounded-full bg-ink text-white text-[11px] flex items-center justify-center mono">4</span>
+              <span class="font-medium">Лента</span>
+            </div>
+            <p class="text-ink-500 leading-relaxed">
+              Items попадают в раздел <a @click="setView('news')" class="text-ink cursor-pointer underline">Новости</a>
+              со статусом <span class="mono">draft</span>. Язык — из общих настроек.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="label mb-4">параметры стрима</div>
+        <dl class="divide-y divide-ink-100 border-y border-ink-200 text-[13px]">
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">URL</dt>
+            <dd class="text-ink-600">Любой YouTube live-эфир. Поддерживает 24/7-каналы, long-running streams, DVR-режим.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">название канала</dt>
+            <dd class="text-ink-600">Как будет называться в атрибуции каждой новости: <span class="mono">«Источник: <название>»</span>.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">ведущий (опц.)</dt>
+            <dd class="text-ink-600">Добавляется в атрибуцию: <span class="mono">«Источник: CNN, 2026-04-19, Anderson Cooper»</span>. Если не указан — только канал+дата.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">интервал</dt>
+            <dd class="text-ink-600">Длина каждого чанка в минутах. <span class="mono">2-5</span> — баланс: меньше = быстрее news items, больше = лучше контекст для Claude.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">whisper-модель</dt>
+            <dd class="text-ink-600">
+              <span class="mono">small</span> быстро, слабее на русском.
+              <span class="mono">medium</span> сбалансирована.
+              <span class="mono">distil-large-v3</span> — как large-v3, но втрое быстрее и без OOM на 6 GB VRAM.
+            </dd>
+          </div>
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">сводный бриф</dt>
+            <dd class="text-ink-600">Галочка включает возможность собрать один markdown-бриф по всем транскриптам стрима. Шаблон <span class="mono">news</span> — без ТЗ, <span class="mono">full</span> — с ТЗ.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">авто на остановке</dt>
+            <dd class="text-ink-600">Если включено вместе со «сводным брифом» — при нажатии <span class="mono">стоп</span> автоматически генерится итоговый бриф по накопленным данным.</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div>
+        <div class="label mb-4">действия с запущенным стримом</div>
+        <dl class="divide-y divide-ink-100 border-y border-ink-200 text-[13px]">
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">пауза</dt>
+            <dd class="text-ink-600">Останавливает capture + обработку. Транскрипт текущего чанка дорабатывается, очередь drain'ится. Можно продолжить кнопкой «продолжить».</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">стоп</dt>
+            <dd class="text-ink-600">Полностью завершает мониторинг, стрим уходит в «историю стримов». Данные остаются. Если стоял флаг «авто на остановке» — генерит сводный бриф.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">рестарт</dt>
+            <dd class="text-ink-600">На остановленном стриме — возобновить захват с того места, где прекратили. Индекс чанков продолжается (3, 4, 5…).</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">ред.</dt>
+            <dd class="text-ink-600">Править поля (интервал, whisper, настройки брифа). URL-смена требует пауза → продолжить. Остальное вступает в силу на следующем чанке.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">бриф сейчас</dt>
+            <dd class="text-ink-600">Вручную собрать сводный бриф на текущий момент. Склеивает все расшифрованные чанки + прогоняет через Claude. Не останавливает capture.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[160px_1fr] gap-4">
+            <dt class="text-ink-500">удалить</dt>
+            <dd class="text-ink-600">Сносит стрим со всеми чанками, MP3-файлами, NewsItem, StreamBrief. Каскад. <span class="text-red-600">Необратимо.</span></dd>
+          </div>
+        </dl>
+      </div>
+
+      <div>
+        <div class="label mb-4">стоимость</div>
+        <p class="text-[13px] text-ink-600 leading-relaxed">
+          <span class="mono text-ink">faster-whisper</span> локально — <strong>$0</strong> за расшифровку.
+          <span class="mono text-ink">Claude</span> за news-extract — ~$0.01-0.02 на 2-минутный чанк на Sonnet 4.6, на час стрима — ~$0.30-0.60.
+          Сводный бриф — ещё ~$0.05-0.15 за прогон в зависимости от длительности. Supadata не задействована для live — только yt-dlp.
+          Статус ключей и их использование — в <a @click="setView('settings')" class="text-ink cursor-pointer underline">Настройках</a>.
+        </p>
+      </div>
+
+    </div>
+
+    <!-- NEW STREAM FORM -->
+    <div x-show="showStreamForm" x-transition class="border border-ink-200 rounded-md p-5 mb-6 space-y-4 bg-ink-50">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <label class="block">
+          <span class="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">URL live-эфира</span>
+          <input x-model="streamForm.url" type="text"
+                 placeholder="https://www.youtube.com/watch?v=..."
+                 class="w-full px-3 py-2 border border-ink-200 rounded text-[13px] mono bg-white" />
+        </label>
+        <label class="block">
+          <span class="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">название канала</span>
+          <input x-model="streamForm.channel_name" type="text"
+                 placeholder="Bloomberg Live"
+                 class="w-full px-3 py-2 border border-ink-200 rounded text-[13px] bg-white" />
+        </label>
+        <label class="block">
+          <span class="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">ведущий (опционально)</span>
+          <input x-model="streamForm.speaker_default" type="text"
+                 placeholder="Марк Цукерберг"
+                 class="w-full px-3 py-2 border border-ink-200 rounded text-[13px] bg-white" />
+        </label>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">интервал, мин</span>
+            <input x-model.number="streamForm.interval_min" type="number" min="1" max="30"
+                   class="w-full px-3 py-2 border border-ink-200 rounded text-[13px] mono bg-white" />
+          </label>
+          <label class="block">
+            <span class="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">whisper</span>
+            <select x-model="streamForm.whisper_model"
+                    class="w-full px-3 py-2 border border-ink-200 rounded text-[13px] bg-white">
+              <option value="tiny">tiny</option>
+              <option value="base">base</option>
+              <option value="small">small</option>
+              <option value="medium">medium</option>
+              <option value="large-v3">large-v3</option>
+              <option value="distil-large-v3">distil-large-v3</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap gap-x-6 gap-y-2 text-[12px] text-ink-600 pt-2 border-t border-ink-200">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" x-model="streamForm.make_summary_brief" class="accent-ink" />
+          <span>сводный бриф на весь стрим</span>
+        </label>
+        <template x-if="streamForm.make_summary_brief">
+          <div class="flex items-center gap-4 pl-2 border-l border-ink-200">
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" x-model="streamForm.brief_template" value="news" class="accent-ink" />
+              <span>news (без ТЗ)</span>
+            </label>
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" x-model="streamForm.brief_template" value="full" class="accent-ink" />
+              <span>full (с ТЗ)</span>
+            </label>
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" x-model="streamForm.auto_brief_on_stop" class="accent-ink" />
+              <span>авто на остановке</span>
+            </label>
+          </div>
+        </template>
+      </div>
+
+      <div class="flex items-center gap-3 pt-2">
+        <button @click="saveStream()"
+                :disabled="!streamForm.url || !streamForm.channel_name"
+                class="px-5 py-2 bg-ink text-white rounded text-[13px] font-medium disabled:opacity-30 disabled:cursor-not-allowed hover:bg-ink-600">
+          <span x-text="editingStreamId ? 'сохранить изменения' : 'старт мониторинга'"></span>
+        </button>
+        <span x-show="!editingStreamId" class="text-[11px] text-ink-400">
+          захват начнётся сразу; первый чанк — через <span x-text="streamForm.interval_min || 5"></span> мин
+        </span>
+        <span x-show="editingStreamId" class="text-[11px] text-ink-400">
+          изменения вступят в силу на следующем чанке. для смены URL — сначала «пауза», потом «продолжить»
+        </span>
+      </div>
+    </div>
+
+    <!-- STREAMS LIST -->
+    <div class="mb-8">
+      <div class="flex items-baseline justify-between mb-3">
+        <span class="text-[11px] uppercase tracking-wider text-ink-500">активные потоки</span>
+        <div class="flex items-center gap-3">
+          <button x-show="historyStreams.length > 0" @click="toggleLoadFromHistory()"
+                  class="text-[11px] text-ink-500 hover:text-ink flex items-center gap-1">
+            <span x-text="showLoadFromHistory ? 'скрыть' : 'загрузить из истории'"></span>
+            <span x-show="!showLoadFromHistory" class="text-ink-400" x-text="'(' + historyStreams.length + ')'"></span>
+          </button>
+          <button @click="loadStreams()" class="text-[11px] text-ink-400 hover:text-ink">обновить</button>
+        </div>
+      </div>
+
+      <!-- LOAD FROM HISTORY PICKER -->
+      <div x-show="showLoadFromHistory" x-transition x-cloak
+           class="mb-4 border border-ink-200 rounded-md p-4 bg-ink-50">
+        <div class="flex items-center justify-between mb-3 text-[11px]">
+          <div class="flex items-center gap-3">
+            <button @click="selectAllArchived()" class="text-ink-500 hover:text-ink">выбрать всё</button>
+            <span class="text-ink-300">·</span>
+            <button @click="selectedArchivedIds = []" class="text-ink-500 hover:text-ink">снять выбор</button>
+          </div>
+          <button @click="loadSelectedArchivedStreams()"
+                  :disabled="selectedArchivedIds.length === 0 || busyBatchLoad"
+                  class="px-3 py-1 bg-ink text-white rounded text-[11px] font-medium disabled:opacity-30 hover:bg-ink-600">
+            <span x-show="!busyBatchLoad">запустить выбранные (<span x-text="selectedArchivedIds.length"></span>)</span>
+            <span x-show="busyBatchLoad">запускаю…</span>
+          </button>
+        </div>
+        <div class="divide-y divide-ink-100 border-y border-ink-200">
+          <template x-for="h in historyStreams" :key="h.id">
+            <label class="py-2.5 flex items-center gap-3 cursor-pointer hover:bg-white px-2 -mx-2 rounded">
+              <input type="checkbox" :value="h.id" x-model="selectedArchivedIds" class="accent-ink shrink-0" />
+              <div class="min-w-0 flex-1">
+                <div class="text-[13px] font-medium text-ink truncate" x-text="h.title"></div>
+                <div class="text-[11px] text-ink-400 mono truncate">
+                  <span x-text="h.id.slice(0, 12)"></span>
+                  <span>·</span>
+                  <span x-text="'чанков ' + (h._raw?.chunks_total || 0)"></span>
+                  <span>·</span>
+                  <span x-text="'новостей ' + (h._raw?.news_items_count || 0)"></span>
+                  <span>·</span>
+                  <span x-text="(new Date(h.created_at)).toLocaleDateString('ru-RU')"></span>
+                </div>
+              </div>
+            </label>
+          </template>
+        </div>
+      </div>
+
+      <div x-show="activeStreams.length === 0" class="text-[13px] text-ink-400">Нет активных. Остановленные — ниже, в «истории стримов».</div>
+      <div x-show="activeStreams.length > 0" class="border-y border-ink-200 divide-y divide-ink-100">
+        <template x-for="s in activeStreams" :key="s.id">
+          <div class="py-4 grid grid-cols-[1fr_auto] gap-4 items-start">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-[14px] font-medium" x-text="s.channel_name"></span>
+                <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded"
+                      :class="{
+                        'bg-emerald-50 text-emerald-700': s.status === 'active' && s.running,
+                        'bg-amber-50 text-amber-700': s.status === 'active' && !s.running,
+                        'bg-ink-100 text-ink-600': s.status === 'paused',
+                        'bg-ink-200 text-ink-500': s.status === 'stopped',
+                      }"
+                      x-text="s.running ? s.status : (s.status === 'active' ? 'запуск…' : s.status)"></span>
+              </div>
+              <div class="text-[11px] text-ink-500 mono mb-1 truncate" x-text="s.url"></div>
+              <div class="text-[11px] text-ink-400 mono flex gap-3 flex-wrap">
+                <span>интервал <span class="text-ink-600" x-text="s.interval_min"></span>мин</span>
+                <span>·</span>
+                <span>whisper <span class="text-ink-600" x-text="s.whisper_model"></span></span>
+                <span>·</span>
+                <span>чанков <span class="text-ink-600" x-text="s.chunks_total"></span></span>
+                <span>·</span>
+                <span>новостей <span class="text-ink-600" x-text="s.news_items_count"></span></span>
+                <span x-show="s.speaker_default">·</span>
+                <span x-show="s.speaker_default" x-text="s.speaker_default"></span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-[12px]">
+              <button x-show="s.make_summary_brief && s.chunks_total > 0"
+                      @click="makeStreamBrief(s.id, s.brief_template)"
+                      :disabled="briefingStreamId === s.id"
+                      class="px-3 py-1 border border-ink-200 rounded hover:border-ink text-ink-500 hover:text-ink disabled:opacity-50">
+                <span x-show="briefingStreamId !== s.id">бриф сейчас</span>
+                <span x-show="briefingStreamId === s.id">…</span>
+              </button>
+              <button x-show="s.status === 'active'" @click="pauseStream(s.id)"
+                      class="px-3 py-1 border border-ink-200 rounded hover:border-ink text-ink-500 hover:text-ink">пауза</button>
+              <button x-show="s.status === 'paused'" @click="resumeStream(s.id)"
+                      class="px-3 py-1 border border-ink-200 rounded hover:border-ink text-ink-500 hover:text-ink">продолжить</button>
+              <button x-show="s.status === 'stopped'" @click="resumeStream(s.id)"
+                      class="px-3 py-1 border border-ink-200 rounded hover:border-emerald-600 text-emerald-700 hover:text-emerald-700"
+                      title="Перезапустить захват с текущими настройками. Ранее собранные чанки и новости остаются.">рестарт</button>
+              <button x-show="s.status !== 'stopped'" @click="stopStreamConfirm(s.id)"
+                      class="px-3 py-1 border border-ink-200 rounded hover:border-ink text-ink-500 hover:text-ink">стоп</button>
+              <button @click="openEditStream(s)"
+                      class="px-3 py-1 border border-ink-200 rounded hover:border-ink text-ink-500 hover:text-ink">ред.</button>
+              <button @click="deleteStreamConfirm(s.id)"
+                      class="px-3 py-1 text-red-600 hover:text-red-700">удалить</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- DRAFT NEWS MODERATION QUEUE -->
+    <div class="mt-10">
+      <div class="flex items-baseline justify-between mb-1 gap-3 flex-wrap">
+        <span class="text-[11px] uppercase tracking-wider text-ink-500">на модерации</span>
+        <div class="flex items-center gap-3 text-[12px] text-ink-500">
+          <label class="flex items-center gap-1.5">
+            <span>стрим</span>
+            <select x-model="newsFilter.stream_id" @change="loadNewsItems()"
+                    class="border-0 border-b border-ink-200 bg-transparent text-ink pb-0.5 cursor-pointer text-[12px]">
+              <option value="">все</option>
+              <template x-for="s in streams" :key="s.id">
+                <option :value="s.id" x-text="s.channel_name"></option>
+              </template>
+            </select>
+          </label>
+          <button @click="loadNewsItems()" class="text-[11px] text-ink-400 hover:text-ink">обновить</button>
+        </div>
+      </div>
+      <p class="text-[12px] text-ink-400 mb-5">
+        Новые news-items приходят сюда в статусе <span class="mono">draft</span> по мере обработки чанков.
+        <span class="text-ink-600">Одобрить</span> — попадёт во вкладку «Новости».
+        <span class="text-ink-600">Отклонить</span> — останется в БД, но в «Новости» не уйдёт.
+      </p>
+
+      <div x-show="draftNews.length === 0" class="text-[13px] text-ink-400 py-8 text-center border border-dashed border-ink-200 rounded">
+        Нет новостей на модерации.
+        <div class="text-[11px] text-ink-300 mt-1">Если стримы активны — скоро появятся.</div>
+      </div>
+
+      <div class="mb-3 text-[11px] text-ink-500 flex items-center gap-3 flex-wrap">
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" x-model="hideDupesInModeration" class="accent-ink" />
+          <span>скрыть дубликаты (<span x-text="draftNews.filter(i => i.duplicate_of_id).length"></span>)</span>
+        </label>
+      </div>
+
+      <div x-show="visibleDraftNews.length > 0" class="divide-y divide-ink-100 border-y border-ink-200">
+        <template x-for="item in visibleDraftNews" :key="item.id">
+          <article class="py-4 cursor-pointer hover:bg-ink-50 px-2 -mx-2 rounded"
+                   :class="{'opacity-60': item.duplicate_of_id}"
+                   @click="openNewsDetail(item.id)">
+            <div class="flex items-baseline justify-between gap-4 mb-1">
+              <div class="flex items-center gap-2 flex-1 min-w-0">
+                <h3 class="text-[14px] font-medium text-ink leading-snug" x-text="item.headline"></h3>
+                <span x-show="item.duplicate_of_id"
+                      :title="'Похоже на news-item #' + item.duplicate_of_id + ' (sim ' + (item.duplicate_sim || 0).toFixed(2) + ')'"
+                      class="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded">
+                  🔁 дубликат
+                </span>
+              </div>
+              <div class="flex items-center gap-2 shrink-0 text-[11px] mono">
+                <span class="text-ink-400" x-text="(new Date(item.created_at)).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})"></span>
+                <span class="text-ink-400" x-show="item.category">·</span>
+                <span class="text-ink-500 uppercase" x-text="item.category"></span>
+                <span class="text-ink-400">·</span>
+                <span :class="item.confidence >= 0.8 ? 'text-emerald-600' : (item.confidence >= 0.5 ? 'text-ink-500' : 'text-amber-600')"
+                      x-text="'conf ' + item.confidence.toFixed(2)"></span>
+              </div>
+            </div>
+            <blockquote class="text-[13px] text-ink-600 border-l-2 border-ink-200 pl-3 my-2 italic" x-text="item.quote"></blockquote>
+            <div class="flex items-center justify-between mt-2">
+              <div class="text-[11px] text-ink-400 mono" x-text="item.attribution"></div>
+              <div class="flex items-center gap-2 text-[11px]">
+                <span x-show="item.tags.length > 0" class="text-ink-400 mono"
+                      x-text="item.tags.map(t => '#' + t).join(' ')"></span>
+                <button @click.stop="approveItem(item.id)"
+                        class="px-3 py-1 border border-ink-200 rounded hover:border-emerald-600 hover:text-emerald-600 text-ink-500 font-medium">✓ одобрить</button>
+                <button @click.stop="rejectItem(item.id)"
+                        class="px-3 py-1 border border-ink-200 rounded hover:border-red-600 hover:text-red-600 text-ink-500">✗ отклонить</button>
+              </div>
+            </div>
+          </article>
+        </template>
+      </div>
+    </div>
+
+    <!-- STREAM BRIEFS -->
+    <div class="mt-10">
+      <div class="flex items-baseline justify-between mb-3">
+        <span class="text-[11px] uppercase tracking-wider text-ink-500">сводные брифы</span>
+        <button @click="loadAllStreamBriefs()" class="text-[11px] text-ink-400 hover:text-ink">обновить</button>
+      </div>
+      <div x-show="streamBriefs.length === 0" class="text-[13px] text-ink-400">
+        Сводные брифы появятся здесь после нажатия «бриф сейчас» на стриме или на его остановке, если включена опция «авто на остановке».
+      </div>
+      <div x-show="streamBriefs.length > 0" class="border-y border-ink-200 divide-y divide-ink-100">
+        <template x-for="b in streamBriefs" :key="b.id">
+          <div class="py-4" x-data="{open: false}">
+            <div class="flex items-baseline justify-between gap-4 cursor-pointer" @click="open = !open">
+              <div class="min-w-0">
+                <div class="flex items-baseline gap-3 mb-1">
+                  <span class="text-[14px] font-medium" x-text="b.stream_name || '(без канала)'"></span>
+                  <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-ink-100 text-ink-600 rounded" x-text="b.template"></span>
+                </div>
+                <div class="text-[11px] text-ink-400 mono flex gap-3 flex-wrap">
+                  <span x-text="(new Date(b.created_at)).toLocaleString('ru-RU')"></span>
+                  <span>·</span>
+                  <span x-text="b.model"></span>
+                  <span>·</span>
+                  <span x-text="'чанков ' + b.chunks_covered"></span>
+                  <span x-show="b.cost_usd">·</span>
+                  <span x-show="b.cost_usd" x-text="'$' + (b.cost_usd || 0).toFixed(4)"></span>
+                </div>
+              </div>
+              <svg class="w-3 h-3 transition-transform shrink-0" :class="{'rotate-180': open}" viewBox="0 0 12 12" fill="currentColor"><path d="M6 8L2 4h8z"/></svg>
+            </div>
+            <div x-show="open" x-transition class="mt-3 pt-3 border-t border-ink-100 text-[13px] leading-relaxed">
+              <template x-for="sec in splitBriefSections(b.content_md)" :key="sec.title">
+                <div class="mb-5">
+                  <div class="flex items-baseline justify-between gap-3 mb-2 group">
+                    <h4 class="text-[14px] font-semibold text-ink" x-text="sec.title"></h4>
+                    <div class="flex items-center gap-3 text-[11px] opacity-60 group-hover:opacity-100 transition-opacity">
+                      <button @click.stop="copySection(sec.title, sec.body)" class="text-ink-500 hover:text-ink">копировать</button>
+                      <template x-if="isSpecSection(sec.title)">
+                        <button @click.stop="downloadSection(sec.title, sec.body, 'tz-' + (b.stream_name || 'stream').replace(/\s+/g,'_') + '-' + b.id + '.md')"
+                                class="text-ink-500 hover:text-ink">скачать .md</button>
+                      </template>
+                    </div>
+                  </div>
+                  <div class="prose" x-html="renderMarkdown(sec.body)"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- HISTORY: stopped streams only -->
+  <section x-show="historyStreams.length > 0">
+    <div class="flex items-baseline justify-between mb-1">
+      <div class="label">история стримов</div>
+      <button @click="loadHistory()" class="text-[11px] text-ink-500 hover:text-ink">обновить</button>
+    </div>
+    <p class="text-[12px] text-ink-400 mb-5">Остановленные мониторинги. Данные сохранены — можно открыть, перезапустить, удалить.</p>
+    <div class="border-y border-ink-200 divide-y divide-ink-100">
+      <template x-for="h in historyStreams" :key="h.id">
+        <button @click="openStreamFromHistory(h)"
+                class="w-full text-left py-4 grid grid-cols-[1fr_auto] gap-4 items-center hover:bg-ink-50 px-2 -mx-2 rounded">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-ink-100 text-ink-600">stopped</span>
+              <span class="text-[14px] font-medium text-ink truncate" x-text="h.title"></span>
+            </div>
+            <div class="text-[11px] text-ink-400 mono mt-0.5 flex gap-3 flex-wrap">
+              <template x-for="(p, idx) in (h.subtitle_parts || [])" :key="idx">
+                <span class="flex gap-3">
+                  <span x-show="idx > 0">·</span>
+                  <span x-text="p"></span>
+                </span>
+              </template>
+              <span>·</span>
+              <span x-text="(new Date(h.created_at)).toLocaleString('ru-RU')"></span>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 text-[11px] shrink-0">
+            <span @click.stop="resumeStream(h.id)"
+                  class="text-emerald-700 hover:underline cursor-pointer"
+                  title="Возобновить захват с теми же настройками">рестарт</span>
+            <span class="text-ink-300">·</span>
+            <span @click.stop="deleteStreamConfirm(h.id)" class="text-red-600 hover:underline cursor-pointer">удалить</span>
+          </div>
+        </button>
+      </template>
+    </div>
+  </section>
+
+</div><!-- /TAB: СТРИМЫ -->
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: НОВОСТИ ────────────────────────────────────────────── -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div x-show="activeView === 'news'" x-cloak class="space-y-16 max-w-5xl mx-auto">
+
+  <section>
+    <div class="flex items-baseline justify-between mb-1 gap-3 flex-wrap">
+      <div class="label">лента новостей</div>
+      <button @click="showNewsHelp = !showNewsHelp"
+              class="text-[11px] text-ink-500 hover:text-ink flex items-center gap-1">
+        <span x-text="showNewsHelp ? 'скрыть' : 'как это работает'"></span>
+        <svg class="w-3 h-3 transition-transform" :class="{'rotate-180': showNewsHelp}" viewBox="0 0 12 12" fill="currentColor"><path d="M6 8L2 4h8z"/></svg>
+      </button>
+    </div>
+    <p class="text-[12px] text-ink-400 mb-5">
+      Только <strong class="text-ink-600">одобренные</strong> утверждения из прямых эфиров. Ждущие модерации
+      (<span class="mono">draft</span>) — во вкладке <a @click="setView('streams')" class="text-ink cursor-pointer underline">Стримы</a>.
+      Экспорт JSON/PDF учитывает фильтры.
+    </p>
+
+    <!-- NEWS HELP PANEL ──────────────────────────────────────── -->
+    <div x-show="showNewsHelp" x-transition x-cloak class="mb-8 border-t border-b border-ink-200 py-8 space-y-10">
+
+      <div>
+        <div class="label mb-4">что такое news item</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 text-[13px]">
+          <div class="space-y-3">
+            <p class="text-ink-600 leading-relaxed">
+              Каждая карточка в ленте — отдельное новостное утверждение, которое Claude извлёк из транскрипта
+              одного чанка. Это НЕ пересказ — это попытка зафиксировать конкретный факт, цифру или заявление
+              как публикуемую новость.
+            </p>
+          </div>
+          <div class="border border-ink-200 rounded-md p-4 bg-ink-50 text-[12px]">
+            <div class="font-medium text-ink mb-1">Headline</div>
+            <div class="text-ink-500 mb-2 italic">«Эксперт: Трамп отверг предложение НАТО...»</div>
+            <blockquote class="border-l-2 border-ink-300 pl-2 text-ink-600 mb-2">«Президент Дональд Трамп занимает максимально жёсткую позицию...»</blockquote>
+            <div class="text-ink-400 mono mb-1">Источник: Подробиці, 2026-04-19 14:23</div>
+            <div class="text-ink-400 mono">politics · conf 0.82 · #Трамп #НАТО #США</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="label mb-4">поля записи</div>
+        <dl class="divide-y divide-ink-100 border-y border-ink-200 text-[13px]">
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">headline</dt>
+            <dd class="text-ink-600">Одна строка, publish-ready. Без кликбейта — конкретно что произошло. Формулируется Claude на целевом языке (из настроек).</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">quote</dt>
+            <dd class="text-ink-600">Прямая цитата из транскрипта. Если исходный язык эфира отличается от целевого — перевод по смыслу, числа/имена сохраняются.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">category</dt>
+            <dd class="text-ink-600">Одна из: <span class="mono">politics · business · tech · markets · macro · sports · culture · science · other</span>.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">confidence</dt>
+            <dd class="text-ink-600">0.0–1.0. Цвет индикатора: зелёный ≥0.80 (надёжно), серый 0.50-0.80, оранжевый &lt;0.50 (спорно, проверяй).</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">offset_sec</dt>
+            <dd class="text-ink-600">Секунда от начала чанка, где прозвучало. Абсолютная метка в эфире = <span class="mono">chunk.started_at + offset_sec</span>.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">attribution</dt>
+            <dd class="text-ink-600">Автосборка: <span class="mono">«Источник: [канал], [дата/время][, ведущий]»</span>. Хранится как готовая строка.</dd>
+          </div>
+          <div class="py-3 grid grid-cols-[140px_1fr] gap-4">
+            <dt class="text-ink-500">tags</dt>
+            <dd class="text-ink-600">2-5 коротких тегов: компании, люди, страны, инструменты. Для поиска и фильтрации в будущем.</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div>
+        <div class="label mb-4">статусы и workflow</div>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-[13px]">
+          <div>
+            <div class="mb-1"><span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-ink-100 text-ink-600 mono">draft</span></div>
+            <p class="text-ink-500 leading-relaxed">По умолчанию при создании. Видна в ленте, но не «подтверждена». Фильтр draft показывает то, что ещё требует твоего внимания.</p>
+          </div>
+          <div>
+            <div class="mb-1"><span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 mono">approved</span></div>
+            <p class="text-ink-500 leading-relaxed">Кнопка «✓ одобрить». Готова к публикации/экспорту. Обычно — экспорт в JSON/PDF для ручного рерайта.</p>
+          </div>
+          <div>
+            <div class="mb-1"><span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-ink-100 text-ink-600 mono">rejected</span></div>
+            <p class="text-ink-500 leading-relaxed">Кнопка «✗ отклонить». Остаётся в БД, показывается приглушённой. Не попадёт в экспорт.</p>
+          </div>
+          <div>
+            <div class="mb-1"><span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-ink-100 text-ink-600 mono">exported</span></div>
+            <p class="text-ink-500 leading-relaxed">Резерв на будущее — когда подключим публикаторы (Telegram, RSS). Пока не используется.</p>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="label mb-4">фильтры и экспорт</div>
+        <p class="text-[13px] text-ink-600 leading-relaxed">
+          Селекторы <span class="mono">стрим</span> и <span class="mono">статус</span> применяются на сервере (<span class="mono">GET /news-items?stream_id=X&amp;status=Y</span>).
+          Кнопки <span class="mono">JSON</span>/<span class="mono">PDF</span> экспортируют <strong>текущую выборку</strong> с учётом фильтров через
+          <span class="mono">POST /export</span>. JSON — raw dump со всеми полями. PDF — читаемый отчёт с Cyrillic-шрифтом и группировкой.
+        </p>
+      </div>
+
+    </div>
+
+    <div class="flex items-center gap-3 mb-4 text-[12px] text-ink-500 flex-wrap">
+      <label class="flex items-center gap-1.5">
+        <span>стрим</span>
+        <select x-model="newsFilter.stream_id" @change="loadNewsItems()"
+                class="border-0 border-b border-ink-200 bg-transparent text-ink pb-0.5 cursor-pointer text-[12px]">
+          <option value="">все</option>
+          <template x-for="s in streams" :key="s.id">
+            <option :value="s.id" x-text="s.channel_name"></option>
+          </template>
+        </select>
+      </label>
+      <span class="text-[11px] text-ink-400">показаны: <span class="mono text-ink">approved</span> (<span x-text="approvedNews.length"></span>)</span>
+      <span class="text-ink-300">|</span>
+      <span class="text-[11px] text-ink-400">экспорт:</span>
+      <button @click="exportNewsItems('json')" :disabled="approvedNews.length === 0"
+              title="Скачать одобренные как JSON"
+              class="text-[11px] px-2 py-0.5 border border-ink-200 rounded hover:border-ink text-ink-500 hover:text-ink disabled:opacity-30">JSON</button>
+      <button @click="exportNewsItems('pdf')" :disabled="approvedNews.length === 0"
+              title="Скачать одобренные как PDF-отчёт"
+              class="text-[11px] px-2 py-0.5 border border-ink-200 rounded hover:border-ink text-ink-500 hover:text-ink disabled:opacity-30">PDF</button>
+      <span class="text-ink-300">|</span>
+      <button @click="loadNewsItems()" class="text-[11px] text-ink-400 hover:text-ink">обновить</button>
+    </div>
+
+    <div x-show="approvedNews.length === 0" class="text-[13px] text-ink-400 py-12 text-center border border-dashed border-ink-200 rounded">
+      <div x-show="draftNews.length === 0">
+        Пока ничего не одобрено. Запусти мониторинг — дождись news items — одобри во вкладке «Стримы».
+        <div class="mt-2"><a @click="setView('streams')" class="text-ink cursor-pointer hover:underline">→ Стримы</a></div>
+      </div>
+      <div x-show="draftNews.length > 0">
+        <span x-text="draftNews.length"></span> запис<span x-text="draftNews.length === 1 ? 'ь ждёт' : 'ей ждут'"></span> модерации во вкладке «Стримы».
+        <div class="mt-2"><a @click="setView('streams')" class="text-ink cursor-pointer hover:underline">→ модерация</a></div>
+      </div>
+    </div>
+
+    <div x-show="approvedNews.length > 0" class="divide-y divide-ink-100 border-y border-ink-200">
+      <template x-for="item in approvedNews" :key="item.id">
+        <article class="py-4 cursor-pointer hover:bg-ink-50 px-2 -mx-2 rounded"
+                 :class="{'opacity-50': item.status === 'rejected'}"
+                 @click="openNewsDetail(item.id)">
+          <div class="flex items-baseline justify-between gap-4 mb-1">
+            <h3 class="text-[14px] font-medium text-ink leading-snug" x-text="item.headline"></h3>
+            <div class="flex items-center gap-2 shrink-0 text-[11px] mono">
+              <span class="text-ink-400" x-text="(new Date(item.created_at)).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})"></span>
+              <span class="text-ink-400" x-show="item.category">·</span>
+              <span class="text-ink-500 uppercase" x-text="item.category"></span>
+              <span class="text-ink-400">·</span>
+              <span :class="item.confidence >= 0.8 ? 'text-emerald-600' : (item.confidence >= 0.5 ? 'text-ink-500' : 'text-amber-600')"
+                    x-text="'conf ' + item.confidence.toFixed(2)"></span>
+            </div>
+          </div>
+          <blockquote class="text-[13px] text-ink-600 border-l-2 border-ink-200 pl-3 my-2 italic" x-text="item.quote"></blockquote>
+          <div class="flex items-center justify-between mt-2">
+            <div class="text-[11px] text-ink-400 mono" x-text="item.attribution"></div>
+            <div class="flex items-center gap-2 text-[11px]">
+              <span x-show="item.tags.length > 0" class="text-ink-400 mono"
+                    x-text="item.tags.map(t => '#' + t).join(' ')"></span>
+              <span x-show="item.status !== 'draft'"
+                    class="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider"
+                    :class="{
+                      'bg-emerald-50 text-emerald-700': item.status === 'approved',
+                      'bg-ink-100 text-ink-600': item.status === 'rejected' || item.status === 'exported',
+                    }"
+                    x-text="item.status"></span>
+              <button x-show="item.status === 'draft'" @click.stop="approveItem(item.id)"
+                      class="px-2 py-0.5 border border-ink-200 rounded hover:border-emerald-600 hover:text-emerald-600 text-ink-500">✓ одобрить</button>
+              <button x-show="item.status === 'draft'" @click.stop="rejectItem(item.id)"
+                      class="px-2 py-0.5 border border-ink-200 rounded hover:border-red-600 hover:text-red-600 text-ink-500">✗ отклонить</button>
+            </div>
+          </div>
+        </article>
+      </template>
+    </div>
+  </section>
+
+</div><!-- /TAB: НОВОСТИ -->
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: НАСТРОЙКИ ──────────────────────────────────────────── -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div x-show="activeView === 'settings'" x-cloak class="space-y-16 max-w-5xl mx-auto">
+
+  <!-- CONNECTORS ─────────────────────────────────────────────── -->
+  <section>
+    <div class="flex items-baseline justify-between mb-1">
+      <div class="label">api-коннекторы</div>
+      <button @click="loadIntegrations()" class="text-[11px] text-ink-400 hover:text-ink">обновить</button>
+    </div>
+    <p class="text-[12px] text-ink-400 mb-5">
+      5 интеграций — 3 облачные (ключ API) и 2 локальные (установка на машину).
+      Ключи пишутся в <span class="mono">.env</span> и сразу применяются без рестарта.
+    </p>
+    <div class="divide-y divide-ink-100 border-y border-ink-200">
+      <template x-for="(cfg, id) in integrations" :key="id">
+        <div class="py-5">
+          <div class="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
+            <div class="flex items-baseline gap-3">
+              <span class="text-[14px] font-medium" x-text="cfg.name"></span>
+              <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded"
+                    :class="cfg.kind === 'cloud' ? 'bg-ink-100 text-ink-600' : 'bg-emerald-50 text-emerald-700'"
+                    x-text="cfg.kind === 'cloud' ? 'cloud' : 'local'"></span>
+              <span class="text-[12px] text-ink-500" x-text="cfg.description"></span>
+            </div>
+            <div class="flex items-center gap-3 text-[12px]">
+              <span :class="cfg.configured ? 'text-emerald-700' : 'text-ink-400'"
+                    x-text="cfg.configured ? 'подключён' : 'не настроен'"></span>
+              <button @click="testApi(id)"
+                      class="px-3 py-1 border border-ink-200 rounded hover:border-ink text-ink-500 hover:text-ink">проверить</button>
+              <a :href="cfg.website" target="_blank" class="text-ink-400 hover:text-ink">↗</a>
+            </div>
+          </div>
+
+          <!-- Cloud: key input + save (collapsed by default when key is configured) -->
+          <template x-if="cfg.kind === 'cloud'">
+            <div class="mt-3 space-y-2">
+              <!-- Collapsed row: masked key + edit button -->
+              <div x-show="cfg.key_masked && !editingKey[id]"
+                   class="flex items-center gap-2 text-[11px] text-ink-500 mono">
+                <span>текущий ключ:</span>
+                <span class="text-ink" x-text="cfg.key_masked"></span>
+                <button @click="editingKey[id] = true; newKeys[id] = ''"
+                        class="text-ink-400 hover:text-ink flex items-center gap-1 ml-auto"
+                        title="изменить ключ">
+                  <span>изменить</span>
+                  <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <path d="M4 6l4 4 4-4"/>
+                  </svg>
+                </button>
+              </div>
+
+              <!-- Not-configured notice (no key yet) -->
+              <div x-show="!cfg.key_masked && !editingKey[id]"
+                   class="flex items-center gap-2 text-[11px] text-ink-500">
+                <span x-text="cfg.env_key + ' не задан'" class="mono text-red-600"></span>
+                <button @click="editingKey[id] = true"
+                        class="ml-auto text-ink-400 hover:text-ink flex items-center gap-1"
+                        title="добавить ключ">
+                  <span>добавить</span>
+                  <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <path d="M4 6l4 4 4-4"/>
+                  </svg>
+                </button>
+              </div>
+
+              <!-- Expanded editor -->
+              <div x-show="editingKey[id]" class="space-y-2">
+                <div class="flex gap-2 items-center">
+                  <input :type="revealKey[id] ? 'text' : 'password'"
+                         :placeholder="'ввести новый ' + cfg.env_key"
+                         x-model="newKeys[id]"
+                         @keydown.escape="editingKey[id] = false; newKeys[id] = ''"
+                         @keydown.enter="if (newKeys[id]) saveKey(id)"
+                         class="flex-1 text-[12px] mono border border-ink-200 rounded px-2 py-1.5" />
+                  <button @click="revealKey[id] = !revealKey[id]"
+                          class="text-[11px] text-ink-400 hover:text-ink"
+                          :title="revealKey[id] ? 'скрыть' : 'показать'"
+                          x-text="revealKey[id] ? '🙈' : '👁'"></button>
+                  <button @click="saveKey(id).then(() => editingKey[id] = false)"
+                          :disabled="!newKeys[id] || savingKey === id"
+                          class="px-3 py-1.5 bg-ink text-white rounded text-[12px] font-medium disabled:opacity-30 hover:bg-ink-600">
+                    <span x-show="savingKey !== id">сохранить</span>
+                    <span x-show="savingKey === id">сохраняю…</span>
+                  </button>
+                  <button @click="editingKey[id] = false; newKeys[id] = ''"
+                          class="text-[11px] text-ink-400 hover:text-ink px-1"
+                          title="отмена">✕</button>
+                </div>
+              </div>
+
+              <div x-show="cfg.model" class="text-[11px] text-ink-500 mono">
+                модель: <span x-text="cfg.model"></span>
+              </div>
+            </div>
+          </template>
+
+          <!-- Local: install hint + models list -->
+          <template x-if="cfg.kind === 'local'">
+            <div class="mt-3 space-y-2 text-[12px]">
+              <div class="flex gap-2 items-center" x-show="cfg.install_cmd">
+                <code class="mono text-ink bg-ink-100 px-2 py-1 rounded" x-text="cfg.install_cmd"></code>
+                <button @click="copyInstallCmd(cfg.install_cmd)"
+                        class="text-[11px] text-ink-400 hover:text-ink">копировать</button>
+              </div>
+              <div class="text-[11px] text-ink-500" x-text="cfg.install_hint"></div>
+              <div x-show="cfg.models && cfg.models.length" class="text-[11px] text-ink-500 mono">
+                модели: <span class="text-ink" x-text="(cfg.models || []).join(', ')"></span>
+              </div>
+              <div x-show="cfg.endpoint" class="text-[11px] text-ink-500 mono">
+                endpoint: <span x-text="cfg.endpoint"></span>
+              </div>
+            </div>
+          </template>
+
+          <!-- Test result (per integration) -->
+          <div x-show="testResult[id]" class="mt-3 text-[12px] mono"
+               :class="testResult[id]?.ok ? 'text-emerald-700' : 'text-red-600'"
+               x-text="testResult[id]?.msg || ''"></div>
+        </div>
+      </template>
+    </div>
+    <p class="text-[11px] text-ink-400 mt-4">Облачные ключи лежат в <span class="mono">.env</span> в корне проекта.</p>
+  </section>
+
+
+  <!-- SETTINGS ─────────────────────────────────────────────── -->
+  <section>
+    <div class="flex items-baseline justify-between mb-1">
+      <div class="label">настройки</div>
+      <button @click="showSettings = !showSettings" class="text-[11px] text-ink-500 hover:text-ink flex items-center gap-1">
+        <span x-text="showSettings ? 'скрыть' : 'открыть'"></span>
+        <svg class="w-3 h-3 transition-transform" :class="{'rotate-180': showSettings}" viewBox="0 0 12 12" fill="currentColor"><path d="M6 8L2 4h8z"/></svg>
+      </button>
+    </div>
+    <p class="text-[12px] text-ink-400 mb-5">Пресеты для форм — что подставлять по умолчанию. Хранятся в БД (<span class="mono">AppSetting</span>), переживают рестарт сервера.</p>
+
+    <div x-show="showSettings" x-transition class="border-y border-ink-200 divide-y divide-ink-100">
+
+      <div class="py-4 grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+        <span class="text-[13px] text-ink-600">модель Claude для видео</span>
+        <select x-model="settings.default_brief_model" class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
+          <option value="">автоматически (env / sonnet-4.6)</option>
+          <option value="claude-opus-4-7">claude-opus-4-7</option>
+          <option value="claude-opus-4-6">claude-opus-4-6</option>
+          <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+          <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+        </select>
+        <span class="text-[11px] text-ink-400">используется в брифах одиночных видео и в news-extraction стримов</span>
+      </div>
+
+      <div class="py-4 grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+        <span class="text-[13px] text-ink-600">язык брифа</span>
+        <select x-model="settings.default_brief_lang" class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
+          <option value="ru">ru</option>
+          <option value="en">en</option>
+        </select>
+        <span class="text-[11px] text-ink-400">дефолт для формы вверху</span>
+      </div>
+
+      <div class="py-4 grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+        <span class="text-[13px] text-ink-600">формат брифа</span>
+        <select x-model="settings.default_brief_format" class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
+          <option value="markdown">markdown</option>
+          <option value="json">json (structured)</option>
+        </select>
+        <span class="text-[11px] text-ink-400">markdown для чтения, json для парсинга</span>
+      </div>
+
+      <div class="py-4 grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+        <span class="text-[13px] text-ink-600">backend</span>
+        <select x-model="settings.default_backend" class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
+          <option value="auto">auto (умный fallback)</option>
+          <option value="supadata">supadata</option>
+          <option value="ytdlp">ytdlp</option>
+        </select>
+        <span class="text-[11px] text-ink-400">auto подойдёт в 99% случаев</span>
+      </div>
+
+      <div class="py-4 grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+        <span class="text-[13px] text-ink-600">whisper-модель для стримов</span>
+        <select x-model="settings.default_whisper_model" class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
+          <option value="tiny">tiny</option>
+          <option value="base">base</option>
+          <option value="small">small</option>
+          <option value="medium">medium</option>
+          <option value="large-v3">large-v3</option>
+          <option value="distil-large-v3">distil-large-v3</option>
+        </select>
+        <span class="text-[11px] text-ink-400">medium — сбалансировано, distil-large-v3 — точнее при той же скорости</span>
+      </div>
+
+      <div class="py-4 grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+        <span class="text-[13px] text-ink-600">интервал чанка, мин</span>
+        <input x-model.number="settings.default_stream_interval_min" type="number" min="1" max="30" class="w-20 text-[13px] border border-ink-200 rounded px-2 py-1 mono" />
+        <span class="text-[11px] text-ink-400">меньше = быстрее появление news items, больше = лучше контекст</span>
+      </div>
+
+      <div class="py-4 grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+        <span class="text-[13px] text-ink-600">шаблон сводного брифа</span>
+        <select x-model="settings.default_brief_template" class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
+          <option value="news">news (без ТЗ)</option>
+          <option value="full">full (с ТЗ)</option>
+        </select>
+        <span class="text-[11px] text-ink-400">news для новостных эфиров, full для подкастов/интервью</span>
+      </div>
+
+      <div class="py-4 grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+        <span class="text-[13px] text-ink-600">авто-бриф на остановке</span>
+        <label class="flex items-center gap-2 text-[13px] text-ink-600 cursor-pointer">
+          <input type="checkbox" x-model="settings.default_auto_brief_on_stop" class="accent-ink" />
+          <span>включено по умолчанию</span>
+        </label>
+        <span class="text-[11px] text-ink-400">триггер срабатывает только если активен «сводный бриф»</span>
+      </div>
+
+      <!-- ENRICHMENT SECTION -->
+      <div class="py-5">
+        <div class="text-[11px] uppercase tracking-wider text-ink-500 mb-3">обогащение новостей</div>
+        <p class="text-[12px] text-ink-400 mb-4">
+          При клике на news-item можно «развернуть» — сгенерировать расширенный текст и иллюстрацию.
+          Картинки дедуплицируются по концепт-фразе: новость про нефть → один раз стягивается стоковое фото
+          «нефтяного барреля», дальше переиспользуется для похожих сюжетов.
+        </p>
+        <div class="space-y-3">
+          <div class="grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+            <span class="text-[13px] text-ink-600">text-модель (OpenAI)</span>
+            <select x-model="settings.enrich_text_model" class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
+              <option value="gpt-4o-mini">GPT-4o mini — дешёвая, быстрая ($0.15/$0.60 за 1M)</option>
+              <option value="gpt-4o">GPT-4o — баланс ($2.50/$10.00)</option>
+              <option value="gpt-4-turbo">GPT-4 Turbo — качество ($10/$30)</option>
+              <option value="o1-mini">o1-mini — reasoning ($3/$12)</option>
+            </select>
+            <span class="text-[11px] text-ink-400">используется и для expand, и для концепт-фразы картинки</span>
+          </div>
+
+          <div class="grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+            <span class="text-[13px] text-ink-600">источник картинок</span>
+            <select x-model="settings.enrich_image_source" class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
+              <option value="hybrid">hybrid — Pexels + AI-обработка (gpt-image-1)</option>
+              <option value="stock">stock — только Pexels, без AI (бесплатно)</option>
+              <option value="generate">generate — чистая AI-генерация (DALL-E)</option>
+            </select>
+            <span class="text-[11px] text-ink-400">
+              hybrid = реальное фото + light newsroom edit, максимум «редакционности»
+            </span>
+          </div>
+
+          <div class="grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+            <span class="text-[13px] text-ink-600">модель для AI-генерации</span>
+            <select x-model="settings.enrich_image_model" class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
+              <option value="dall-e-3">DALL-E 3 — high quality, $0.08/img</option>
+              <option value="dall-e-3-hd">DALL-E 3 HD — best quality, $0.12/img</option>
+              <option value="gpt-image-1">GPT-image-1 — newest, $0.011–$0.222/img</option>
+              <option value="dall-e-2">DALL-E 2 — basic, $0.02/img</option>
+            </select>
+            <span class="text-[11px] text-ink-400">применяется при source=generate, и как fallback если Pexels упал</span>
+          </div>
+
+          <div class="grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+            <span class="text-[13px] text-ink-600">порог concept-dedup</span>
+            <input x-model.number="settings.enrich_image_dedup_threshold" type="number" min="0.5" max="0.99" step="0.01"
+                   class="w-20 text-[13px] border border-ink-200 rounded px-2 py-1 mono" />
+            <span class="text-[11px] text-ink-400">
+              cosine similarity embeddings концепт-фраз. 0.88 = переиспользовать при явно близкой теме
+            </span>
+          </div>
+
+          <div class="grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+            <span class="text-[13px] text-ink-600">картинки вообще</span>
+            <label class="flex items-center gap-2 text-[13px] text-ink-600 cursor-pointer">
+              <input type="checkbox" x-model="settings.enrich_image_enabled" class="accent-ink" />
+              <span>включить иллюстрации</span>
+            </label>
+            <span class="text-[11px] text-ink-400">выключи если нужен только text expand без картинок</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- DEDUP SECTION -->
+      <div class="py-5">
+        <div class="text-[11px] uppercase tracking-wider text-ink-500 mb-3">дедупликация новостей</div>
+        <p class="text-[12px] text-ink-400 mb-4">
+          Семантическое сравнение headline через локальные embeddings. Дубликаты
+          помечаются бейджем в модерации, можно скрывать одним чекбоксом. Поиск — только в
+          пределах окна последних N часов. Никаких токенов Anthropic не тратится.
+        </p>
+        <div class="space-y-3">
+          <div class="grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+            <span class="text-[13px] text-ink-600">включить</span>
+            <label class="flex items-center gap-2 text-[13px] text-ink-600 cursor-pointer">
+              <input type="checkbox" x-model="settings.dedup_enabled" class="accent-ink" />
+              <span>считать embeddings для каждого нового item</span>
+            </label>
+            <span class="text-[11px] text-ink-400">выключено = item попадает в модерацию без проверки</span>
+          </div>
+          <div class="grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+            <span class="text-[13px] text-ink-600">провайдер</span>
+            <select x-model="settings.dedup_embedding_provider"
+                    class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
+              <option value="fastembed">fastembed (локально, ONNX)</option>
+              <option value="ollama">ollama (localhost:11434)</option>
+              <option value="openai">openai (api.openai.com или local LM Studio/llama.cpp)</option>
+              <option value="none">none (отключено)</option>
+            </select>
+            <span class="text-[11px] text-ink-400">fastembed — нулевая настройка, всё остальное требует свой сервис</span>
+          </div>
+          <div class="grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+            <span class="text-[13px] text-ink-600">модель</span>
+            <input x-model="settings.dedup_embedding_model" type="text"
+                   placeholder="оставь пустым для дефолта провайдера"
+                   class="text-[13px] border border-ink-200 rounded px-2 py-1 mono" />
+            <span class="text-[11px] text-ink-400">
+              fastembed: <span class="mono">paraphrase-multilingual-MiniLM-L12-v2</span> · ollama: <span class="mono">nomic-embed-text</span>
+            </span>
+          </div>
+          <div class="grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+            <span class="text-[13px] text-ink-600">окно сравнения, часов</span>
+            <input x-model.number="settings.dedup_window_hours" type="number" min="1" max="168"
+                   class="w-20 text-[13px] border border-ink-200 rounded px-2 py-1 mono" />
+            <span class="text-[11px] text-ink-400">24ч — новость в том же сюжете; 168ч = неделя, для long-running тем</span>
+          </div>
+          <div class="grid grid-cols-[180px_1fr_auto] gap-4 items-center">
+            <span class="text-[13px] text-ink-600">порог cosine sim</span>
+            <input x-model.number="settings.dedup_similarity_threshold" type="number" min="0.5" max="0.99" step="0.01"
+                   class="w-20 text-[13px] border border-ink-200 rounded px-2 py-1 mono" />
+            <span class="text-[11px] text-ink-400">
+              0.85 — «та же мысль другими словами» · 0.90+ — почти дословный повтор · 0.70 — агрессивно, риск ложных
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="py-5 flex items-center gap-3">
+        <button @click="saveSettings()" :disabled="savingSettings"
+                class="px-5 py-2 bg-ink text-white rounded text-[13px] font-medium disabled:opacity-30 hover:bg-ink-600">
+          <span x-show="!savingSettings">сохранить</span>
+          <span x-show="savingSettings">сохраняю…</span>
+        </button>
+        <button @click="resetSettings()" class="text-[12px] text-ink-500 hover:text-red-600">сбросить к дефолтам</button>
+        <span x-show="settingsSaved" x-transition class="text-[12px] text-emerald-600">✓ сохранено</span>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /TAB: НАСТРОЙКИ -->
+
+  <footer class="pt-12 pb-4 text-[11px] text-ink-400 mono flex justify-between max-w-5xl mx-auto">
+    <span>VideoText v0.3</span>
+    <a href="/docs" target="_blank" class="hover:text-ink">swagger →</a>
+  </footer>
+
+</main>
+
+<!-- STICKY LOG PANEL — fixed at bottom of viewport, aligned with main content ─── -->
+<div class="fixed bottom-0 left-60 right-0 bg-ink text-ink-200 border-t border-ink-600 mono text-[12px] z-40 shadow-lg"
+     :class="{'max-h-[280px]': logExpanded, 'max-h-[36px]': !logExpanded}"
+     style="transition: max-height 200ms ease;">
+  <div class="max-w-5xl mx-auto px-8 py-2 flex items-center justify-between border-b border-ink-600 cursor-pointer"
+       @click="logExpanded = !logExpanded">
+    <div class="flex items-center gap-3 min-w-0">
+      <span class="label !text-ink-400">лог</span>
+      <span class="text-ink-500" x-text="'(' + log.length + ')'"></span>
+      <span x-show="!logExpanded && log.length === 0" class="text-ink-500 italic">пусто</span>
+      <span x-show="!logExpanded && log.length > 0" class="text-ink-300 truncate">
+        <span x-text="log[log.length-1]?.t"></span>
+        <span class="ml-2" :class="{
+          'text-emerald-400': log[log.length-1]?.level === 'ok',
+          'text-red-400':     log[log.length-1]?.level === 'error',
+        }" x-text="log[log.length-1]?.msg"></span>
+      </span>
+    </div>
+    <div class="flex items-center gap-3 shrink-0">
+      <button x-show="log.length > 0" @click.stop="log = []" class="text-[11px] text-ink-400 hover:text-white">очистить</button>
+      <svg class="w-3 h-3 transition-transform" :class="{'rotate-180': !logExpanded}" viewBox="0 0 12 12" fill="currentColor"><path d="M6 4l4 4H2z"/></svg>
+    </div>
+  </div>
+  <div x-show="logExpanded" class="max-w-5xl mx-auto px-8 py-3 overflow-y-auto scroll-thin" style="max-height: 240px;">
+    <template x-if="log.length === 0">
+      <div class="text-ink-500 italic">Сюда попадают все действия: создание стримов, получение брифов, ошибки. Очищается при Ctrl+R.</div>
+    </template>
+    <template x-for="line in log.slice().reverse()" :key="line.t + line.msg">
+      <div class="flex gap-3 leading-relaxed">
+        <span class="text-ink-500 shrink-0" x-text="line.t"></span>
+        <span :class="{
+          'text-ink-200':    line.level === 'info',
+          'text-emerald-400': line.level === 'ok',
+          'text-red-400':    line.level === 'error',
+        }" x-text="line.msg"></span>
+      </div>
+    </template>
+  </div>
+</div>
+
+<!-- NEWS DETAIL MODAL ─────────────────────────────────────────── -->
+<div x-show="detailItem" x-cloak x-transition.opacity
+     class="fixed inset-0 z-50 bg-ink/50 flex items-start justify-center p-4 overflow-y-auto"
+     @click.self="closeNewsDetail()"
+     @keydown.escape.window="closeNewsDetail()">
+  <div class="bg-white rounded-lg w-full max-w-3xl my-8 shadow-xl">
+    <!-- Header -->
+    <div class="flex items-start justify-between gap-4 p-6 border-b border-ink-100">
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2 mb-2 text-[11px] mono">
+          <span class="text-ink-500" x-text="detailItem?.stream_name || '—'"></span>
+          <span class="text-ink-300">·</span>
+          <span class="text-ink-500" x-text="detailItem?.category || '—'"></span>
+          <span class="text-ink-300">·</span>
+          <span :class="(detailItem?.confidence || 0) >= 0.8 ? 'text-emerald-600' : ((detailItem?.confidence || 0) >= 0.5 ? 'text-ink-500' : 'text-amber-600')"
+                x-text="'conf ' + (detailItem?.confidence || 0).toFixed(2)"></span>
+          <span class="text-ink-300" x-show="detailItem?.status !== 'draft'">·</span>
+          <span x-show="detailItem?.status !== 'draft'"
+                class="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider"
+                :class="{
+                  'bg-emerald-50 text-emerald-700': detailItem?.status === 'approved',
+                  'bg-ink-100 text-ink-600': detailItem?.status === 'rejected',
+                }"
+                x-text="detailItem?.status"></span>
+        </div>
+        <h2 class="text-[20px] font-semibold text-ink leading-snug" x-text="detailItem?.headline"></h2>
+      </div>
+      <button @click="closeNewsDetail()" class="text-ink-400 hover:text-ink text-2xl leading-none shrink-0">×</button>
+    </div>
+
+    <!-- Illustration -->
+    <template x-if="detailItem?.image?.url">
+      <div class="px-6 pt-6">
+        <img :src="detailItem.image.url" :alt="detailItem.image.concept"
+             class="w-full rounded-md border border-ink-100" />
+        <div class="mt-2 text-[11px] mono text-ink-400 flex gap-3 flex-wrap">
+          <span>концепт: <span class="text-ink-600" x-text="detailItem.image.concept"></span></span>
+          <span>·</span>
+          <span x-text="detailItem.image.model"></span>
+          <span x-show="detailItem.image.reuse_count > 0">·</span>
+          <span x-show="detailItem.image.reuse_count > 0" class="text-emerald-700"
+                x-text="'переиспользована ' + detailItem.image.reuse_count + ' раз'"></span>
+        </div>
+      </div>
+    </template>
+
+    <!-- Body: quote + expanded text -->
+    <div class="p-6 space-y-5">
+      <blockquote class="border-l-2 border-ink-200 pl-4 italic text-ink-600 leading-relaxed"
+                  x-text="detailItem?.quote"></blockquote>
+
+      <template x-if="detailItem?.expanded_text">
+        <div>
+          <div class="text-[11px] uppercase tracking-wider text-ink-500 mb-2">расширенный контекст</div>
+          <div class="prose text-[14px] leading-relaxed whitespace-pre-line"
+               x-text="detailItem.expanded_text"></div>
+          <div class="mt-3 text-[11px] mono text-ink-400 flex gap-3 flex-wrap">
+            <span>модель: <span x-text="detailItem.expanded_model"></span></span>
+            <span x-show="detailItem.expanded_cost_usd">·</span>
+            <span x-show="detailItem.expanded_cost_usd"
+                  x-text="'$' + (detailItem.expanded_cost_usd || 0).toFixed(4)"></span>
+          </div>
+        </div>
+      </template>
+
+      <template x-if="!detailItem?.expanded_text">
+        <div class="text-center py-6 border border-dashed border-ink-200 rounded-md">
+          <p class="text-[13px] text-ink-500 mb-3">
+            Расширенный контекст и картинка ещё не сгенерированы.
+          </p>
+          <button @click="enrichNewsItem(detailItem.id)"
+                  :disabled="busyEnrich"
+                  class="px-5 py-2 bg-ink text-white rounded-md text-[13px] font-medium disabled:opacity-30 hover:bg-ink-600">
+            <span x-show="!busyEnrich">✨ обогатить через AI</span>
+            <span x-show="busyEnrich">генерирую…</span>
+          </button>
+          <p class="text-[11px] text-ink-400 mt-3">
+            Expand + картинка через OpenAI (~$0.08-0.12). Концепт-дубликаты картинок переиспользуются.
+          </p>
+        </div>
+      </template>
+
+      <!-- Tags -->
+      <div x-show="detailItem?.tags?.length" class="flex flex-wrap gap-2">
+        <template x-for="t in (detailItem?.tags || [])" :key="t">
+          <span class="text-[11px] mono px-2 py-0.5 bg-ink-50 text-ink-600 rounded" x-text="'#' + t"></span>
+        </template>
+      </div>
+    </div>
+
+    <!-- Footer: attribution + actions -->
+    <div class="p-6 border-t border-ink-100 flex items-center justify-between gap-4 flex-wrap">
+      <div class="text-[11px] mono text-ink-500 min-w-0 flex-1" x-text="detailItem?.attribution"></div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button x-show="detailItem?.status === 'draft'" @click="approveItem(detailItem.id).then(() => openNewsDetail(detailItem.id))"
+                class="px-3 py-1.5 border border-ink-200 rounded hover:border-emerald-600 hover:text-emerald-600 text-[12px] text-ink-500">✓ одобрить</button>
+        <button x-show="detailItem?.status === 'draft'" @click="rejectItem(detailItem.id).then(() => openNewsDetail(detailItem.id))"
+                class="px-3 py-1.5 border border-ink-200 rounded hover:border-red-600 hover:text-red-600 text-[12px] text-ink-500">✗ отклонить</button>
+        <button x-show="detailItem?.expanded_text" @click="enrichNewsItem(detailItem.id)"
+                :disabled="busyEnrich"
+                class="px-3 py-1.5 border border-ink-200 rounded hover:border-ink text-[12px] text-ink-500 hover:text-ink disabled:opacity-30">
+          <span x-show="!busyEnrich">переобогатить</span>
+          <span x-show="busyEnrich">…</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- AI ASSISTANT — floating button + slide-in panel ─────────── -->
+<div x-data="assistantPanel()" x-init="init()">
+  <!-- Floating button (always visible, bottom-right) -->
+  <button @click="open = !open"
+          class="fixed bottom-5 right-5 w-12 h-12 rounded-full bg-ink text-white shadow-lg hover:bg-ink-600 flex items-center justify-center z-40 transition-all"
+          :class="pulse ? 'ring-2 ring-orange-400 ring-offset-2 animate-pulse' : ''"
+          :title="pulse ? 'Есть свежие ошибки — нажмите' : 'AI-ассистент'">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6">
+      <rect x="4" y="6" width="16" height="12" rx="2"/>
+      <circle cx="9" cy="12" r="1" fill="currentColor" stroke="none"/>
+      <circle cx="15" cy="12" r="1" fill="currentColor" stroke="none"/>
+      <path d="M12 3v3M8 18l-2 3M16 18l2 3"/>
+    </svg>
+  </button>
+
+  <!-- Slide-in panel -->
+  <div x-show="open" x-transition.duration.200ms
+       class="fixed top-0 right-0 bottom-0 w-full sm:w-[420px] bg-white border-l border-ink-200 shadow-2xl z-50 flex flex-col">
+    <!-- Header -->
+    <div class="px-4 py-3 border-b border-ink-100 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded-full bg-ink text-white flex items-center justify-center text-[11px] font-bold">AI</div>
+        <div>
+          <div class="text-[13px] font-semibold">Ассистент</div>
+          <div class="text-[10px] text-ink-500 mono" x-text="(settings.assistant_provider || 'openai') + ' · ' + (settings.assistant_model || 'gpt-4o')"></div>
+        </div>
+      </div>
+      <div class="flex items-center gap-1">
+        <button @click="clearConversation()" title="очистить чат"
+                class="w-7 h-7 rounded hover:bg-ink-100 flex items-center justify-center text-ink-500">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 6h8M6 4h4M6 6v6M10 6v6M5 6v8h6V6"/></svg>
+        </button>
+        <button @click="open = false" title="закрыть"
+                class="w-7 h-7 rounded hover:bg-ink-100 flex items-center justify-center text-ink-500">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Quick actions (when empty) -->
+    <div x-show="messages.length === 0" class="p-4 space-y-2">
+      <div class="text-[11px] label mb-2">Быстрые действия</div>
+      <template x-for="qa in quickActions" :key="qa.label">
+        <button @click="ask(qa.prompt)"
+                class="w-full text-left px-3 py-2 rounded border border-ink-200 hover:border-ink text-[12px] flex items-center gap-2">
+          <span x-text="qa.icon"></span>
+          <span x-text="qa.label"></span>
+        </button>
+      </template>
+      <div class="text-[10px] text-ink-400 pt-3 leading-relaxed">
+        Ассистент знает про твою БД, настройки, ошибки и коннекторы. Может сам тестировать интеграции и предлагать изменения настроек с твоим подтверждением.
+      </div>
+    </div>
+
+    <!-- Messages -->
+    <div class="flex-1 overflow-y-auto scroll-thin p-4 space-y-3" x-ref="scroller">
+      <template x-for="(m, idx) in messages" :key="idx">
+        <div>
+          <div x-show="m.role === 'user'" class="flex justify-end">
+            <div class="max-w-[85%] bg-ink text-white rounded-lg px-3 py-2 text-[13px] whitespace-pre-wrap" x-text="m.content"></div>
+          </div>
+          <div x-show="m.role === 'assistant'" class="space-y-1">
+            <div class="text-[10px] label flex items-center gap-2">
+              <span>Ассистент</span>
+              <span x-show="m.cache_hit" class="text-emerald-600">💾 из кэша</span>
+              <span x-show="m.similarity" class="mono text-ink-400" x-text="'(' + Math.round((m.similarity||0)*100) + '%)'"></span>
+              <span x-show="m.cost_usd" class="mono text-ink-400" x-text="'$' + (m.cost_usd||0).toFixed(4)"></span>
+            </div>
+            <div class="prose prose-sm text-[13px]" x-html="renderMd(m.content)"></div>
+            <template x-if="m.tool_events && m.tool_events.length">
+              <details class="text-[11px] text-ink-500">
+                <summary class="cursor-pointer hover:text-ink">Инструменты (<span x-text="m.tool_events.length"></span>)</summary>
+                <div class="mt-1 space-y-1">
+                  <template x-for="ev in m.tool_events" :key="ev.id">
+                    <div class="mono text-[10px] bg-ink-50 rounded px-2 py-1">
+                      <div><span class="text-ink-400">→</span> <span class="font-semibold" x-text="ev.name"></span> <span class="text-ink-500" x-text="JSON.stringify(ev.args)"></span></div>
+                      <div :class="ev.result?.ok ? 'text-emerald-600' : 'text-red-600'" x-text="(ev.result?.ok ? '✓' : '✗') + ' ' + (ev.result?.msg || ev.result?.error || JSON.stringify(ev.result))"></div>
+                    </div>
+                  </template>
+                </div>
+              </details>
+            </template>
+          </div>
+          <div x-show="m.role === 'tool'" class="text-[11px] text-ink-500 mono bg-ink-50 rounded px-2 py-1" x-text="m.content"></div>
+        </div>
+      </template>
+      <div x-show="streaming" class="flex items-center gap-2 text-[11px] text-ink-500">
+        <div class="animate-pulse">●</div>
+        <span x-text="streamingStatus || 'думает…'"></span>
+      </div>
+    </div>
+
+    <!-- Tool confirmation prompt -->
+    <div x-show="pendingWrite" class="px-4 py-2 border-t border-orange-200 bg-orange-50">
+      <div class="text-[11px] text-orange-800 mb-1.5">Ассистент хочет выполнить действие:</div>
+      <div class="mono text-[10px] bg-white rounded px-2 py-1 mb-2" x-text="pendingWrite?.preview"></div>
+      <div class="flex gap-2">
+        <button @click="confirmWrite(true)" class="px-2 py-1 text-[11px] rounded bg-ink text-white hover:bg-ink-600">разрешить</button>
+        <button @click="confirmWrite(false)" class="px-2 py-1 text-[11px] rounded border border-ink-200 hover:border-ink">отменить</button>
+      </div>
+    </div>
+
+    <!-- Input -->
+    <div class="px-4 py-3 border-t border-ink-100">
+      <div class="flex items-end gap-2">
+        <textarea x-model="input" @keydown.enter.prevent="if (!$event.shiftKey) send()"
+                  :disabled="streaming" rows="1"
+                  placeholder="Спроси: «как настроить Pexels?»"
+                  class="flex-1 border border-ink-200 rounded px-3 py-2 text-[13px] resize-none focus:outline-none focus:border-ink disabled:opacity-50"
+                  x-ref="input"></textarea>
+        <button @click="send()" :disabled="streaming || !input.trim()"
+                class="w-9 h-9 rounded bg-ink text-white hover:bg-ink-600 flex items-center justify-center disabled:opacity-30">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 8h12M10 4l4 4-4 4"/></svg>
+        </button>
+      </div>
+      <div class="text-[10px] text-ink-400 mt-1.5 flex items-center justify-between">
+        <span x-show="lastContextChars" x-text="'контекст: ' + lastContextChars + ' симв.'"></span>
+        <span x-show="totalCost > 0" class="mono" x-text="'$' + totalCost.toFixed(4)"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function assistantPanel() {
+  return {
+    open: false,
+    pulse: false,
+    input: '',
+    messages: [],
+    streaming: false,
+    streamingStatus: '',
+    lastContextChars: 0,
+    totalCost: 0,
+    settings: {},
+    pendingWrite: null,
+    _pendingResolve: null,
+
+    quickActions: [
+      { icon: '🔑', label: 'Какие ключи не настроены?', prompt: 'Посмотри текущие настройки и скажи какие коннекторы ещё не настроены и что делать.' },
+      { icon: '⚠️', label: 'Есть ли свежие ошибки?', prompt: 'Проверь через tool get_recent_errors нет ли ошибок за последний час и объясни что делать.' },
+      { icon: '📺', label: 'Что сейчас стримится?', prompt: 'Покажи активные стримы и последние новости оттуда.' },
+      { icon: '🧪', label: 'Проверь все коннекторы', prompt: 'Протестируй supadata, anthropic, openai и pexels через tool test_integration и доложи результат.' },
+    ],
+
+    async init() {
+      try {
+        const r = await fetch('/settings');
+        this.settings = await r.json();
+      } catch {}
+      this.checkErrorsForPulse();
+      setInterval(() => this.checkErrorsForPulse(), 30000);
+
+      // Proactive hand-off: other parts of the UI can dispatch `assistant:error`
+      // to pop the panel open with a pre-filled question about a specific failure.
+      window.addEventListener('assistant:error', (e) => this._handoff(e.detail || {}));
+    },
+
+    _handoff({ provider, message, source }) {
+      this.open = true;
+      this.pulse = false;
+      // Pre-fill the input — user sees the question before sending.
+      // Auto-send after 500ms so they have a chance to abort.
+      const prompt = provider
+        ? `Я только что нажал «проверить» на коннекторе «${provider}» и получил ошибку:\n\n\`${message}\`\n\nРазбери что это значит и что мне делать дальше. Если нужно — вызови tool test_integration повторно или предложи save_api_key.`
+        : `Произошла ошибка: \`${message}\`. Разбери что делать.`;
+      this.input = prompt;
+      this.streamingStatus = 'автозапуск через 0.5с…';
+      this.$nextTick(() => { if (this.$refs.input) this.$refs.input.focus(); });
+      clearTimeout(this._handoffTimer);
+      this._handoffTimer = setTimeout(() => {
+        if (this.input === prompt && !this.streaming) this.send();
+      }, 500);
+    },
+
+    async checkErrorsForPulse() {
+      try {
+        // use our tool-backed endpoint indirectly — simpler: call /streams and look for failures
+        // (we can add a dedicated /assistant/pulse-check later if needed)
+        const r = await fetch('/streams');
+        const data = await r.json();
+        const streams = Array.isArray(data) ? data : (data.streams || []);
+        const recentErrors = streams.some(s => s.status === 'error' || s.error);
+        this.pulse = recentErrors && !this.open;
+      } catch {}
+    },
+
+    renderMd(txt) {
+      try { return window.marked ? marked.parse(txt || '') : (txt || ''); } catch { return txt || ''; }
+    },
+
+    ask(prompt) {
+      this.input = prompt;
+      this.send();
+    },
+
+    clearConversation() {
+      this.messages = [];
+      this.totalCost = 0;
+      this.lastContextChars = 0;
+    },
+
+    async send() {
+      const question = this.input.trim();
+      if (!question || this.streaming) return;
+      this.input = '';
+      this.messages.push({ role: 'user', content: question });
+      this._scrollDown();
+
+      this.streaming = true;
+      this.streamingStatus = 'думает…';
+
+      // Build UI context
+      const ui_ctx = {
+        tab: (Alpine.store && Alpine.store('app')?.activeView) || document.querySelector('[x-data="app()"]')?._x_dataStack?.[0]?.activeView,
+      };
+
+      const assistantMsg = { role: 'assistant', content: '', tool_events: [], cache_hit: false, cost_usd: 0 };
+      this.messages.push(assistantMsg);
+
+      try {
+        const resp = await fetch('/assistant/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, ui_context: ui_ctx, auto_confirm: !!this.settings.assistant_auto_confirm_writes }),
+        });
+        if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
+
+        const reader = resp.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop() || '';
+          for (const part of parts) {
+            const line = part.split('\n').find(l => l.startsWith('data: '));
+            if (!line) continue;
+            const payload = line.slice(6);
+            let ev; try { ev = JSON.parse(payload); } catch { continue; }
+            this._handleEvent(ev, assistantMsg);
+            this._scrollDown();
+          }
+        }
+      } catch (e) {
+        assistantMsg.content += '\n\n⚠ ошибка: ' + e.message;
+      } finally {
+        this.streaming = false;
+        this.streamingStatus = '';
+        this._scrollDown();
+      }
+    },
+
+    _handleEvent(ev, msg) {
+      switch (ev.type) {
+        case 'context':
+          this.lastContextChars = ev.chars;
+          this.streamingStatus = 'обрабатывает контекст…';
+          break;
+        case 'cache_hit':
+          msg.cache_hit = true;
+          msg.similarity = ev.similarity;
+          msg.content = ev.answer;
+          break;
+        case 'text':
+          msg.content += ev.delta;
+          break;
+        case 'tool_call':
+          this.streamingStatus = 'вызывает ' + ev.name + '…';
+          msg.tool_events.push({ id: Date.now() + Math.random(), name: ev.name, args: ev.args, result: null });
+          break;
+        case 'tool_result':
+          {
+            const last = [...msg.tool_events].reverse().find(e => e.name === ev.name && !e.result);
+            if (last) last.result = ev.result;
+          }
+          break;
+        case 'done':
+          msg.cost_usd = ev.cost_usd || 0;
+          this.totalCost += ev.cost_usd || 0;
+          break;
+        case 'error':
+          msg.content += '\n\n⚠ ' + ev.msg;
+          break;
+      }
+    },
+
+    confirmWrite(ok) {
+      if (this._pendingResolve) { this._pendingResolve(ok); this._pendingResolve = null; }
+      this.pendingWrite = null;
+    },
+
+    _scrollDown() {
+      this.$nextTick(() => { const s = this.$refs.scroller; if (s) s.scrollTop = s.scrollHeight; });
+    },
+  };
+}
+
+function app() {
+  return {
+    form: {
+      url: '', brief_lang: 'ru', model: '', format: 'markdown',
+      backend: 'auto', no_brief: false, force_refresh: false,
+    },
+    busy: false,
+    showHelp: false,
+    showStreamsHelp: false,
+    showNewsHelp: false,
+    log: [],
+    logExpanded: false,
+    briefingStreamId: null,
+    streamBriefs: [],
+
+    // View routing — 4 tabs, persisted in URL hash
+    activeView: 'video',
+    tabs: [
+      {
+        id: 'video', label: 'Видео',
+        icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M7 6l3 2-3 2V6z" fill="currentColor"/></svg>',
+      },
+      {
+        id: 'streams', label: 'Стримы',
+        icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2"/><path d="M4.5 4.5a5 5 0 000 7M11.5 4.5a5 5 0 010 7M2 2a8 8 0 000 12M14 2a8 8 0 010 12"/></svg>',
+      },
+      {
+        id: 'news', label: 'Новости',
+        icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 6h6M5 9h6M5 12h4"/></svg>',
+      },
+      {
+        id: 'settings', label: 'Настройки',
+        icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M3 13l1.5-1.5M11.5 4.5L13 3"/></svg>',
+      },
+    ],
+
+    get currentTab() {
+      return this.tabs.find(t => t.id === this.activeView) || this.tabs[0];
+    },
+
+    tabBadge(id) {
+      if (id === 'streams') {
+        // Priority: draft news waiting for moderation (actionable signal).
+        // Fallback: active streams count.
+        const drafts = (this.newsItems || []).filter(i => i.status === 'draft').length;
+        if (drafts > 0) return String(drafts);
+        const n = (this.streams || []).filter(s => s.status !== 'stopped').length;
+        return n > 0 ? String(n) : '';
+      }
+      if (id === 'news') {
+        const n = (this.newsItems || []).filter(i => i.status === 'approved').length;
+        return n > 0 ? String(n) : '';
+      }
+      return '';
+    },
+    result: {},
+    config: { supadata: false, anthropic: false, default_model: 'claude-sonnet-4-6' },
+    integrations: {},       // from GET /config/integrations
+    newKeys: {},            // per-integration pending key input
+    revealKey: {},          // show/hide toggle per field
+    editingKey: {},         // per-integration: true when input is expanded for editing
+    savingKey: null,        // id of integration currently being saved
+    testResult: {},
+    history: [],
+
+    // Phase 1 — live streams
+    showStreamForm: false,
+    editingStreamId: null,
+    streamForm: {
+      url: '', channel_name: '', speaker_default: '',
+      interval_min: 5, whisper_model: 'medium',
+      make_summary_brief: false, brief_template: 'news',
+      auto_brief_on_stop: false,
+    },
+    streams: [],
+    newsItems: [],
+    newsFilter: { stream_id: '', status: '' },
+    _liveRefreshTimer: null,
+
+    // Load-from-history picker (restart stopped streams in batch)
+    showLoadFromHistory: false,
+    selectedArchivedIds: [],
+    busyBatchLoad: false,
+
+    // Dedup view controls
+    hideDupesInModeration: false,
+
+    // News detail modal (expanded text + illustration)
+    detailItem: null,
+    busyEnrich: false,
+
+    // App settings (persisted in DB)
+    showSettings: false,
+    savingSettings: false,
+    settingsSaved: false,
+    settings: {
+      default_brief_model: '', default_brief_lang: 'ru', default_brief_format: 'markdown',
+      default_backend: 'auto', default_whisper_model: 'medium',
+      default_stream_interval_min: 5, default_brief_template: 'news',
+      default_auto_brief_on_stop: false,
+    },
+
+    async init() {
+      // Restore active view from URL hash (#video, #streams, #news, #settings)
+      const hash = (location.hash || '').replace('#', '');
+      if (this.tabs.some(t => t.id === hash)) this.activeView = hash;
+      window.addEventListener('hashchange', () => {
+        const h = (location.hash || '').replace('#', '');
+        if (this.tabs.some(t => t.id === h)) this.activeView = h;
+      });
+
+      await Promise.all([
+        this.loadConfig(), this.loadHistory(),
+        this.loadStreams(), this.loadNewsItems(),
+        this.loadIntegrations(),
+      ]);
+      this._applySettingsToForms();
+      await this.loadAllStreamBriefs();
+      // Poll streams + news every 10s — low overhead, keeps UI live
+      this._liveRefreshTimer = setInterval(() => {
+        this.loadStreams();
+        this.loadNewsItems();
+        this.loadAllStreamBriefs();
+      }, 10000);
+    },
+
+    setView(id) {
+      this.activeView = id;
+      if (location.hash !== '#' + id) {
+        history.replaceState(null, '', '#' + id);
+      }
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    },
+
+    _applySettingsToForms() {
+      // Populate form defaults from settings on initial load only (don't nuke user edits)
+      if (!this.form.url) {
+        this.form.brief_lang = this.settings.default_brief_lang;
+        this.form.fmt = this.settings.default_brief_format;
+        this.form.format = this.settings.default_brief_format;
+        this.form.model = this.settings.default_brief_model;
+        this.form.backend = this.settings.default_backend;
+      }
+      if (!this.streamForm.url) {
+        this.streamForm.whisper_model = this.settings.default_whisper_model;
+        this.streamForm.interval_min = this.settings.default_stream_interval_min;
+        this.streamForm.brief_template = this.settings.default_brief_template;
+        this.streamForm.auto_brief_on_stop = this.settings.default_auto_brief_on_stop;
+      }
+    },
+
+    logLine(msg, level = 'info') {
+      const t = new Date().toLocaleTimeString('ru-RU', { hour12: false });
+      this.log.push({ t, msg, level });
+      if (this.log.length > 100) this.log = this.log.slice(-100);
+      if (level === 'error') this.logExpanded = true;
+    },
+
+    async loadConfig() {
+      try {
+        this.config = await (await fetch('/config')).json();
+        if (this.config.settings) {
+          this.settings = { ...this.settings, ...this.config.settings };
+        }
+      } catch (e) { this.logLine('не удалось /config: ' + e, 'error'); }
+    },
+
+    async loadIntegrations() {
+      try { this.integrations = await (await fetch('/config/integrations')).json(); }
+      catch (e) { this.logLine('не удалось загрузить интеграции: ' + e.message, 'error'); }
+    },
+
+    async saveKey(id) {
+      const key = (this.newKeys[id] || '').trim();
+      if (!key) return;
+      this.savingKey = id;
+      try {
+        const r = await fetch('/config/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ integration: id, key }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ detail: r.statusText }));
+          throw new Error(err.detail || 'HTTP ' + r.status);
+        }
+        this.newKeys[id] = '';
+        this.revealKey[id] = false;
+        this.logLine('ключ ' + id + ' сохранён в .env', 'ok');
+        await this.loadIntegrations();
+        await this.loadConfig();  // refresh sidebar status dots
+      } catch (e) {
+        this.logLine('не удалось сохранить ключ: ' + e.message, 'error');
+      } finally {
+        this.savingKey = null;
+      }
+    },
+
+    copyInstallCmd(cmd) {
+      if (!cmd) return;
+      navigator.clipboard.writeText(cmd).then(() => {
+        this.logLine('команда скопирована: ' + cmd, 'ok');
+      });
+    },
+
+    async saveSettings() {
+      this.savingSettings = true;
+      this.settingsSaved = false;
+      try {
+        const r = await fetch('/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.settings),
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        this.settings = await r.json();
+        this.settingsSaved = true;
+        setTimeout(() => { this.settingsSaved = false; }, 3000);
+      } catch (e) {
+        this.logLine('не удалось сохранить настройки: ' + e.message, 'error');
+      } finally {
+        this.savingSettings = false;
+      }
+    },
+
+    async resetSettings() {
+      if (!confirm('Сбросить все настройки к дефолтам?')) return;
+      // Defaults mirror backend store.DEFAULT_SETTINGS
+      this.settings = {
+        default_brief_model: '', default_brief_lang: 'ru', default_brief_format: 'markdown',
+        default_backend: 'auto', default_whisper_model: 'medium',
+        default_stream_interval_min: 5, default_brief_template: 'news',
+        default_auto_brief_on_stop: false,
+      };
+      await this.saveSettings();
+    },
+
+    async loadHistory() {
+      try {
+        const [videos, streams] = await Promise.all([
+          fetch('/videos').then(r => r.json()),
+          fetch('/streams').then(r => r.json()),
+        ]);
+        const rows = [];
+        for (const v of videos) {
+          rows.push({
+            type: 'video',
+            id: v.id,
+            title: v.title || '(без названия)',
+            language: v.language,
+            duration: v.duration,
+            briefs_count: v.briefs_count,
+            total_cost: v.total_cost,
+            created_at: v.created_at,
+            sort_key: v.created_at,
+          });
+        }
+        for (const s of streams) {
+          if (s.status !== 'stopped') continue;  // active/paused shown in widget section above
+          rows.push({
+            type: 'stream',
+            id: s.id,
+            title: s.channel_name,
+            subtitle_parts: [
+              s.id.slice(0, 12),
+              s.whisper_model,
+              'чанков ' + s.chunks_total,
+              'новостей ' + s.news_items_count,
+            ],
+            briefs_count: null,  // filled after fetching stream briefs
+            total_cost: null,
+            created_at: s.updated_at || s.created_at,
+            sort_key: s.updated_at || s.created_at,
+            _raw: s,
+          });
+        }
+        rows.sort((a, b) => (b.sort_key || '').localeCompare(a.sort_key || ''));
+        this.history = rows;
+      } catch (e) { this.logLine('не удалось загрузить историю: ' + e.message, 'error'); }
+    },
+
+    // Computed: streams shown in the active widget (i.e. not stopped)
+    get activeStreams() {
+      return (this.streams || []).filter(s => s.status !== 'stopped');
+    },
+
+    get historyVideos() {
+      return (this.history || []).filter(h => h.type === 'video');
+    },
+
+    get historyStreams() {
+      return (this.history || []).filter(h => h.type === 'stream');
+    },
+
+    // News segmentation: draft = moderation queue (Streams tab),
+    // approved = public feed (News tab), rejected = archived out of view
+    get draftNews() {
+      return (this.newsItems || []).filter(i => i.status === 'draft');
+    },
+    get visibleDraftNews() {
+      return this.hideDupesInModeration
+        ? this.draftNews.filter(i => !i.duplicate_of_id)
+        : this.draftNews;
+    },
+    get approvedNews() {
+      return (this.newsItems || []).filter(i => i.status === 'approved');
+    },
+
+    async loadStreams() {
+      try { this.streams = await (await fetch('/streams')).json(); }
+      catch (e) { /* silent — polling */ }
+    },
+
+    async loadNewsItems() {
+      try {
+        const params = new URLSearchParams();
+        if (this.newsFilter.stream_id) params.set('stream_id', this.newsFilter.stream_id);
+        if (this.newsFilter.status) params.set('status', this.newsFilter.status);
+        const q = params.toString();
+        this.newsItems = await (await fetch('/news-items' + (q ? '?' + q : ''))).json();
+      } catch (e) { /* silent */ }
+    },
+
+    toggleStreamForm() {
+      if (this.showStreamForm) {
+        this.showStreamForm = false;
+        this.editingStreamId = null;
+        this._resetStreamForm();
+      } else {
+        this.showStreamForm = true;
+      }
+    },
+
+    _resetStreamForm() {
+      this.streamForm = {
+        url: '', channel_name: '', speaker_default: '',
+        interval_min: this.settings.default_stream_interval_min || 5,
+        whisper_model: this.settings.default_whisper_model || 'medium',
+        make_summary_brief: false,
+        brief_template: this.settings.default_brief_template || 'news',
+        auto_brief_on_stop: this.settings.default_auto_brief_on_stop || false,
+      };
+    },
+
+    openEditStream(s) {
+      this.editingStreamId = s.id;
+      this.streamForm = {
+        url: s.url,
+        channel_name: s.channel_name,
+        speaker_default: s.speaker_default || '',
+        interval_min: s.interval_min,
+        whisper_model: s.whisper_model,
+        make_summary_brief: s.make_summary_brief,
+        brief_template: s.brief_template,
+        auto_brief_on_stop: s.auto_brief_on_stop,
+      };
+      this.showStreamForm = true;
+      // Smooth-scroll to the form so it's visible
+      setTimeout(() => window.scrollTo({ top: document.querySelector('section:nth-of-type(1)').offsetTop, behavior: 'smooth' }), 50);
+    },
+
+    async saveStream() {
+      const f = this.streamForm;
+      if (!f.url || !f.channel_name) return;
+      const isEdit = !!this.editingStreamId;
+      this.logLine((isEdit ? 'сохраняю: ' : 'создаю мониторинг: ') + f.channel_name);
+      try {
+        const r = await fetch(
+          isEdit ? ('/streams/' + this.editingStreamId) : '/streams',
+          {
+            method: isEdit ? 'PATCH' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(f),
+          }
+        );
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ detail: r.statusText }));
+          throw new Error(err.detail || 'HTTP ' + r.status);
+        }
+        const data = await r.json();
+        this.logLine(isEdit ? ('обновлено: ' + data.id) : ('стрим запущен: ' + data.id), 'ok');
+        this.showStreamForm = false;
+        this.editingStreamId = null;
+        this._resetStreamForm();
+        await this.loadStreams();
+      } catch (e) {
+        this.logLine('не удалось: ' + e.message, 'error');
+      }
+    },
+
+    async _postStreamAction(id, action) {
+      const r = await fetch('/streams/' + id + '/' + action, { method: 'POST' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    },
+
+    async pauseStream(id) {
+      try { await this._postStreamAction(id, 'pause'); this.logLine('пауза стрима', 'ok'); await this.loadStreams(); }
+      catch (e) { this.logLine(e.message, 'error'); }
+    },
+
+    async resumeStream(id) {
+      try { await this._postStreamAction(id, 'resume'); this.logLine('стрим продолжен', 'ok'); await this.loadStreams(); }
+      catch (e) { this.logLine(e.message, 'error'); }
+    },
+
+    toggleLoadFromHistory() {
+      this.showLoadFromHistory = !this.showLoadFromHistory;
+      if (!this.showLoadFromHistory) this.selectedArchivedIds = [];
+    },
+
+    selectAllArchived() {
+      this.selectedArchivedIds = this.historyStreams.map(h => h.id);
+    },
+
+    async loadSelectedArchivedStreams() {
+      if (this.selectedArchivedIds.length === 0) return;
+      this.busyBatchLoad = true;
+      const ids = [...this.selectedArchivedIds];
+      this.logLine('запускаю ' + ids.length + ' стрим(ов) из истории…');
+      let ok = 0, err = 0;
+      for (const id of ids) {
+        try {
+          await this._postStreamAction(id, 'resume');
+          ok++;
+        } catch (e) {
+          err++;
+          this.logLine('не удалось запустить ' + id.slice(0, 12) + ': ' + e.message, 'error');
+        }
+      }
+      this.logLine('запущено: ' + ok + (err ? ', ошибок: ' + err : ''), err ? 'error' : 'ok');
+      this.selectedArchivedIds = [];
+      this.showLoadFromHistory = false;
+      await this.loadStreams();
+      await this.loadHistory();
+    },
+
+    async stopStreamConfirm(id) {
+      if (!confirm('Остановить мониторинг? Данные и новости сохранятся в БД.')) return;
+      try { await this._postStreamAction(id, 'stop'); this.logLine('стрим остановлен', 'ok'); await this.loadStreams(); }
+      catch (e) { this.logLine(e.message, 'error'); }
+    },
+
+    async deleteStreamConfirm(id) {
+      if (!confirm('УДАЛИТЬ стрим со всеми чанками, транскриптами и новостями? Действие необратимо.')) return;
+      try {
+        const r = await fetch('/streams/' + id, { method: 'DELETE' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        this.logLine('стрим удалён', 'ok');
+        await this.loadStreams();
+        await this.loadNewsItems();
+      } catch (e) { this.logLine(e.message, 'error'); }
+    },
+
+    async approveItem(id) {
+      try {
+        await fetch('/news-items/' + id + '/approve', { method: 'POST' });
+        await this.loadNewsItems();
+      } catch (e) { this.logLine(e.message, 'error'); }
+    },
+
+    async rejectItem(id) {
+      try {
+        await fetch('/news-items/' + id + '/reject', { method: 'POST' });
+        await this.loadNewsItems();
+      } catch (e) { this.logLine(e.message, 'error'); }
+    },
+
+    async openNewsDetail(id) {
+      try {
+        const r = await fetch('/news-items/' + id);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        this.detailItem = await r.json();
+      } catch (e) {
+        this.logLine('не удалось открыть новость: ' + e.message, 'error');
+      }
+    },
+
+    closeNewsDetail() {
+      this.detailItem = null;
+    },
+
+    async enrichNewsItem(id) {
+      if (!id) return;
+      this.busyEnrich = true;
+      this.logLine('обогащаю через AI (текст + картинка)…');
+      try {
+        const r = await fetch('/news-items/' + id + '/enrich', { method: 'POST' });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ detail: r.statusText }));
+          throw new Error(err.detail || 'HTTP ' + r.status);
+        }
+        const data = await r.json();
+        this.logLine(
+          'готово: expanded ' + data.expanded_text.length + ' знаков' +
+          (data.image_id ? ' + ' + (data.image_reused ? 'переиспользована картинка (concept: ' + data.image_concept + ')' : 'новая картинка (concept: ' + data.image_concept + ')') : '') +
+          ' · $' + (data.cost_usd || 0).toFixed(4),
+          'ok',
+        );
+        await this.openNewsDetail(id);  // reload with enriched data
+        await this.loadNewsItems();
+      } catch (e) {
+        this.logLine('обогащение не удалось: ' + e.message, 'error');
+      } finally {
+        this.busyEnrich = false;
+      }
+    },
+
+    async makeStreamBrief(streamId, template) {
+      template = template || 'news';
+      this.briefingStreamId = streamId;
+      this.logLine('генерирую сводный бриф (' + template + ')…');
+      try {
+        const r = await fetch('/streams/' + streamId + '/brief', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template }),
+        });
+        if (!r.ok) throw new Error((await r.json()).detail || 'HTTP ' + r.status);
+        const data = await r.json();
+        this.logLine('бриф #' + data.id + ' готов (' + data.chunks_covered + ' чанков, $' + (data.cost_usd || 0).toFixed(4) + ')', 'ok');
+        await this.loadAllStreamBriefs();
+      } catch (e) {
+        this.logLine('бриф не получился: ' + e.message, 'error');
+      } finally {
+        this.briefingStreamId = null;
+      }
+    },
+
+    async loadAllStreamBriefs() {
+      // Fan-out over active streams; small N, fine without parallelism
+      const all = [];
+      for (const s of this.streams) {
+        try {
+          const briefs = await (await fetch('/streams/' + s.id + '/briefs')).json();
+          for (const b of briefs) {
+            all.push({ ...b, stream_name: s.channel_name, stream_id: s.id });
+          }
+        } catch (e) { /* silent */ }
+      }
+      all.sort((a, b) => b.created_at.localeCompare(a.created_at));
+      this.streamBriefs = all;
+    },
+
+    async exportNewsItems(fmt) {
+      try {
+        // News tab exports only APPROVED items — draft/rejected stay internal.
+        const body = {
+          format: fmt,
+          stream_id: this.newsFilter.stream_id || null,
+          status: 'approved',
+        };
+        const r = await fetch('/export', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const blob = await r.blob();
+        const disp = r.headers.get('Content-Disposition') || '';
+        const match = disp.match(/filename="([^"]+)"/);
+        const filename = match ? match[1] : ('export.' + fmt);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        this.logLine('экспорт ' + fmt.toUpperCase() + ' → ' + filename, 'ok');
+      } catch (e) {
+        this.logLine('экспорт не удался: ' + e.message, 'error');
+      }
+    },
+
+    async run() {
+      if (!this.form.url || this.busy) return;
+      this.busy = true;
+      this.result = {};
+      this.logLine('запускаю: ' + this.form.url);
+
+      try {
+        const body = {
+          url: this.form.url,
+          brief_lang: this.form.brief_lang,
+          format: this.form.format,
+          backend: this.form.backend,
+          no_brief: this.form.no_brief,
+          force_refresh: this.form.force_refresh,
+        };
+        if (this.form.model) body.model = this.form.model;
+
+        const r = await fetch('/briefs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ detail: r.statusText }));
+          throw new Error(err.detail || 'HTTP ' + r.status);
+        }
+        const data = await r.json();
+        if (data.transcript_from_cache) {
+          this.logLine('транскрипт из БД (0 вызовов к Supadata)', 'ok');
+        } else {
+          const path = (data.backends_tried || []).join(' → ');
+          const pathStr = path ? ' через ' + path : '';
+          const fallbackMark = (data.backends_tried || []).length > 1 ? ' (был fallback)' : '';
+          this.logLine('транскрипт готов' + pathStr + fallbackMark + ', ' + (data.duration || 0) + 's', 'ok');
+        }
+        if (data.brief) {
+          if (data.from_cache) {
+            this.logLine('бриф из БД (#' + data.brief_id + ', 0 токенов потрачено)', 'ok');
+          } else {
+            this.logLine('бриф готов, ≈$' + (data.cost_usd || 0).toFixed(4), 'ok');
+          }
+        }
+
+        const full = await fetch('/videos/' + data.video_id + '?segments=true').then(r => r.json());
+        this.result = {
+          video_id: data.video_id,
+          title: data.title || full.title,
+          duration: data.duration || full.duration,
+          language: full.language,
+          source: full.source,
+          transcript_path: data.transcript_path,
+          transcript_from_cache: data.transcript_from_cache,
+          backends_tried: data.backends_tried || [],
+          segments: full.segments || [],
+          brief: data.brief,
+          model: full.brief?.model,
+          cost_usd: data.cost_usd,
+          from_cache: data.from_cache,
+          brief_usage: (!data.from_cache && full.brief) ? {
+            input_tokens: full.brief.input_tokens,
+            output_tokens: full.brief.output_tokens,
+            cache_read_input_tokens: full.brief.cache_read_tokens,
+            cache_creation_input_tokens: full.brief.cache_write_tokens,
+          } : null,
+        };
+        await this.loadHistory();
+      } catch (e) {
+        this.logLine(e.message, 'error');
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    async openStreamFromHistory(h) {
+      // "Open" a stopped stream: filter news feed to it, scroll up to news.
+      this.newsFilter.stream_id = h.id;
+      await this.loadNewsItems();
+      this.logLine('открыт стрим из истории: ' + h.title, 'ok');
+      // Scroll to "прямые эфиры" section
+      const section = document.querySelector('section:has(.label:nth-of-type(1))');
+      // Fallback: find by label text
+      const labels = Array.from(document.querySelectorAll('.label'));
+      const target = labels.find(el => el.textContent.trim() === 'прямые эфиры');
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    },
+
+    async loadVideo(videoId) {
+      this.busy = true;
+      try {
+        const full = await fetch('/videos/' + videoId + '?segments=true').then(r => r.json());
+        this.result = {
+          video_id: full.id,
+          title: full.title,
+          duration: full.duration,
+          language: full.language,
+          source: full.source,
+          segments: full.segments || [],
+          brief: full.brief?.content_md || '',
+          model: full.brief?.model,
+          cost_usd: full.brief?.cost_usd,
+          brief_usage: full.brief ? {
+            input_tokens: full.brief.input_tokens,
+            output_tokens: full.brief.output_tokens,
+            cache_read_input_tokens: full.brief.cache_read_tokens,
+            cache_creation_input_tokens: full.brief.cache_write_tokens,
+          } : null,
+        };
+        this.logLine('из БД: ' + (full.title || videoId), 'ok');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (e) {
+        this.logLine(e.message, 'error');
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    async testApi(which) {
+      this.testResult[which] = { ok: false, msg: 'проверяю…' };
+      let res;
+      try {
+        const r = await fetch('/config/test?provider=' + which, { method: 'POST' });
+        res = await r.json();
+        this.testResult[which] = res;
+      } catch (e) {
+        res = { ok: false, msg: e.message };
+        this.testResult[which] = res;
+      }
+      // Proactive assistant hand-off: if the test failed, open the assistant with this error pre-filled.
+      if (res && res.ok === false) {
+        window.dispatchEvent(new CustomEvent('assistant:error', {
+          detail: { provider: which, message: res.msg || 'неизвестная ошибка', source: 'config/test' },
+        }));
+      }
+    },
+
+    renderMarkdown(text) {
+      if (!text) return '';
+      return marked.parse(text, { breaks: true });
+    },
+
+    splitBriefSections(md) {
+      // Parse "## <title>\n<body>" blocks. Anything before the first ## is ignored.
+      if (!md) return [];
+      const pattern = /^## (.+?)\r?\n([\s\S]*?)(?=\r?\n## |$)/gm;
+      const out = [];
+      let m;
+      while ((m = pattern.exec(md)) !== null) {
+        out.push({ title: m[1].trim(), body: m[2].trim() });
+      }
+      // Fallback: if nothing matched, return the whole thing as one section
+      if (out.length === 0) out.push({ title: 'Бриф', body: md.trim() });
+      return out;
+    },
+
+    isSpecSection(title) {
+      const t = (title || '').toLowerCase();
+      return t.includes('черновик тз') || t.includes('software brief')
+          || t.includes('тз') && t.includes('черновик');
+    },
+
+    copySection(title, body) {
+      const full = '## ' + title + '\n' + body;
+      navigator.clipboard.writeText(full).then(() => {
+        this.logLine('скопировано: ' + title, 'ok');
+      }).catch((e) => {
+        this.logLine('копирование не удалось: ' + e.message, 'error');
+      });
+    },
+
+    downloadSection(title, body, filename) {
+      const safeName = (filename || title.replace(/\s+/g, '_') + '.md')
+        .replace(/[<>:"|?*\/\\]/g, '_');
+      const content = '# ' + title + '\n\n' + body + '\n';
+      const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = safeName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      this.logLine('скачано: ' + safeName, 'ok');
+    },
+
+    copyBrief() {
+      if (this.result.brief) {
+        navigator.clipboard.writeText(this.result.brief);
+        this.logLine('скопировано', 'ok');
+      }
+    },
+
+    fmtTime(sec) {
+      sec = Math.floor(sec);
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return m + ':' + String(s).padStart(2, '0');
+    },
+
+    fmtDuration(sec) {
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      return h > 0 ? (h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0'))
+                   : (m + ':' + String(s).padStart(2, '0'));
+    },
+  };
+}
+</script>
+</body>
+</html>

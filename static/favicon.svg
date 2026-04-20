@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Cream background, ink "V" wordmark in editorial italic -->
+  <rect width="64" height="64" rx="14" fill="#FBFAF7"/>
+  <text x="32" y="46" text-anchor="middle"
+        font-family="'Instrument Serif', Georgia, serif"
+        font-style="italic" font-size="46" fill="#17161A">V</text>
+  <!-- Tiny accent dot — editorial signature -->
+  <circle cx="48" cy="14" r="3" fill="#5865F2"/>
+</svg>

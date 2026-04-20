@@ -1,0 +1,2851 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>VideoText</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:       #FBFAF7;
+    --surface:  #FFFFFF;
+    --panel:    #F3F0E9;
+    --ink:      #17161A;
+    --ink-2:    #2E2B33;
+    --mute:     #6B6770;
+    --mute-2:   #9A959E;
+    --line:     #E8E4DC;
+    --line-2:   #D8D3C8;
+    --acc:      oklch(0.58 0.17 265);
+    --acc-soft: oklch(0.96 0.03 265);
+    --acc-ink:  oklch(0.35 0.14 265);
+    --ok:       oklch(0.62 0.14 155);
+    --ok-soft:  oklch(0.95 0.04 155);
+    --warn:     oklch(0.72 0.16 75);
+    --warn-soft:oklch(0.96 0.05 75);
+    --bad:      oklch(0.58 0.19 25);
+    --bad-soft: oklch(0.96 0.04 25);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  .serif{font-family:'Instrument Serif', Georgia, serif; font-weight:400; letter-spacing:-0.01em;}
+  .mono{font-family:'JetBrains Mono', ui-monospace, monospace; font-feature-settings:"zero"}
+  button{font-family:inherit; cursor:pointer; border:none; background:none; color:inherit; padding:0}
+  input, textarea, select{font-family:inherit; color:inherit}
+  a{color:inherit}
+  ::selection{background: var(--acc-soft); color: var(--acc-ink)}
+
+  /* thin scrollbar */
+  .scroll-thin::-webkit-scrollbar{width:6px;height:6px}
+  .scroll-thin::-webkit-scrollbar-thumb{background: var(--line-2); border-radius:3px}
+  .scroll-thin::-webkit-scrollbar-track{background: transparent}
+
+  /* shared primitives */
+  .hair{background: var(--line); height:1px; width:100%}
+  .chip{
+    display:inline-flex; align-items:center; gap:6px;
+    padding: 3px 8px; border-radius: 999px;
+    font-size:11px; font-weight:500; letter-spacing:0.01em;
+    background: var(--panel); color: var(--ink-2);
+    border: 1px solid var(--line);
+  }
+  .chip-dot{width:6px;height:6px;border-radius:999px;background:var(--mute-2);display:inline-block}
+  .kbd{
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:18px; height:18px; padding:0 5px;
+    font-family:'JetBrains Mono', monospace; font-size:10.5px;
+    background: var(--surface); color: var(--mute);
+    border: 1px solid var(--line); border-bottom-width:2px;
+    border-radius: 4px;
+  }
+  .label-xs{
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em;
+    font-weight: 600; color: var(--mute);
+  }
+  .btn{
+    display:inline-flex; align-items:center; gap:8px;
+    padding: 8px 14px; border-radius: 8px; font-size:13px; font-weight:500;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--line);
+    transition: all 120ms ease;
+  }
+  .btn:hover{border-color: var(--line-2); background: var(--panel)}
+  .btn-primary{
+    background: var(--ink); color: #fff; border-color: var(--ink);
+  }
+  .btn-primary:hover{background: var(--ink-2); border-color: var(--ink-2)}
+  .btn-acc{
+    background: var(--acc); color:#fff; border-color: var(--acc);
+  }
+  .btn-acc:hover{filter:brightness(1.05)}
+  .btn-ghost{background:transparent; border-color: transparent}
+  .btn-ghost:hover{background: var(--panel)}
+
+  .card{
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+
+  /* pulse */
+  @keyframes pulseDot {
+    0%,100%{box-shadow:0 0 0 0 color-mix(in oklch, var(--bad) 40%, transparent)}
+    50%{box-shadow:0 0 0 6px color-mix(in oklch, var(--bad) 0%, transparent)}
+  }
+  .live-dot{
+    width:8px;height:8px;border-radius:999px;background:var(--bad);
+    display:inline-block; animation: pulseDot 1.6s ease-out infinite;
+  }
+
+  /* sparkline container */
+  .spark{height: 28px; width:100%}
+
+  /* modal */
+  .modal-backdrop{
+    position: fixed; inset:0; background: color-mix(in oklch, var(--ink) 25%, transparent);
+    backdrop-filter: blur(4px); z-index: 50;
+    display:flex; align-items:center; justify-content:center;
+    padding: 40px 20px;
+  }
+  .modal{
+    background: var(--surface); border-radius: 16px;
+    border:1px solid var(--line);
+    max-width: 860px; width: 100%; max-height: calc(100vh - 80px);
+    overflow: hidden; display:flex; flex-direction: column;
+    box-shadow: 0 30px 80px -20px color-mix(in oklch, var(--ink) 40%, transparent);
+  }
+
+  /* range input accent */
+  input[type=range]{accent-color: var(--acc)}
+  input[type=checkbox], input[type=radio]{accent-color: var(--ink)}
+
+  /* text input */
+  .text-input{
+    width:100%; padding: 10px 14px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    font-size: 14px; transition: all 120ms;
+    outline: none;
+  }
+  .text-input:focus{border-color: var(--acc); box-shadow: 0 0 0 4px var(--acc-soft)}
+  .text-input.mono{font-family:'JetBrains Mono', monospace; font-size:13px}
+
+  /* toggle */
+  .toggle{
+    position:relative; display:inline-block; width:34px; height:20px;
+    background: var(--line-2); border-radius: 999px; transition: background 120ms;
+    cursor: pointer; flex-shrink: 0;
+  }
+  .toggle::after{
+    content:''; position:absolute; top:2px; left:2px; width:16px; height:16px;
+    background: #fff; border-radius:999px; transition: transform 160ms;
+  }
+  .toggle.on{background: var(--ink)}
+  .toggle.on::after{transform: translateX(14px)}
+
+  /* subtle hover row */
+  .row-h:hover{background: var(--panel)}
+
+  /* placeholder image */
+  .placeholder-img{
+    background:
+      repeating-linear-gradient(135deg, var(--panel) 0 6px, transparent 6px 12px),
+      var(--surface);
+    border: 1px solid var(--line);
+    color: var(--mute); font-family:'JetBrains Mono', monospace; font-size: 11px;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* fade in */
+  @keyframes fadeSlide {
+    from { opacity: 0; transform: translateY(4px) }
+    to   { opacity: 1; transform: none }
+  }
+  .fade-in { animation: fadeSlide 200ms ease-out both }
+
+  /* segment divider dot */
+  .sep{color: var(--mute-2); margin: 0 6px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" data-presets="react">
+
+// === data.jsx ===
+// Mock data + i18n strings
+const I18N = {
+  ru: {
+    tabs: { video: 'Видео', streams: 'Стримы', news: 'Новости', assistant: 'Ассистент', settings: 'Настройки' },
+    tagline: 'Транскрипты, брифы и новости — локально, без слоп-поиска.',
+    videoInputPh: 'Вставь YouTube-ссылку или ID…',
+    run: 'Обработать',
+    running: 'Обрабатываю',
+    lang: 'Язык брифа',
+    model: 'Модель',
+    format: 'Формат',
+    backend: 'Бэкенд',
+    onlyTranscript: 'Только транскрипт',
+    forceRefresh: 'Обновить принудительно',
+    transcript: 'Расшифровка',
+    brief: 'Бриф',
+    history: 'История',
+    streams: 'Прямые эфиры',
+    newStream: 'Новый стрим',
+    activeStreams: 'Активные потоки',
+    moderation: 'На модерации',
+    feed: 'Лента',
+    assistant: 'Ассистент',
+    settings: 'Настройки',
+    integrations: 'Интеграции',
+    storage: 'Хранилище',
+    askPlaceholder: 'Спроси что-нибудь… «как смонтировать чанки?»',
+    send: 'Отправить',
+    fromCache: 'из кэша',
+    cost: 'стоимость',
+    tokens: 'токены',
+    approve: 'Одобрить',
+    reject: 'Отклонить',
+    reviewAll: 'Обработать всё',
+    open: 'Открыть',
+    close: 'Закрыть',
+    source: 'Источник',
+    confidence: 'Достоверность',
+    duration: 'Длительность',
+    channel: 'Канал',
+    speaker: 'Ведущий',
+    interval: 'Интервал',
+    whisper: 'Whisper',
+    status: 'Статус',
+    chunks: 'Чанков',
+    items: 'Новостей',
+    pause: 'Пауза',
+    resume: 'Продолжить',
+    stop: 'Стоп',
+    restart: 'Рестарт',
+    edit: 'Ред.',
+    delete: 'Удалить',
+    briefNow: 'Бриф сейчас',
+  },
+  en: {
+    tabs: { video: 'Video', streams: 'Streams', news: 'News', assistant: 'Assistant', settings: 'Settings' },
+    tagline: 'Transcripts, briefs and news — local, without the AI-slop hunt.',
+    videoInputPh: 'Paste a YouTube URL or video ID…',
+    run: 'Run',
+    running: 'Running',
+    lang: 'Brief language',
+    model: 'Model',
+    format: 'Format',
+    backend: 'Backend',
+    onlyTranscript: 'Transcript only',
+    forceRefresh: 'Force refresh',
+    transcript: 'Transcript',
+    brief: 'Brief',
+    history: 'History',
+    streams: 'Live streams',
+    newStream: 'New stream',
+    activeStreams: 'Active streams',
+    moderation: 'Moderation',
+    feed: 'Feed',
+    assistant: 'Assistant',
+    settings: 'Settings',
+    integrations: 'Integrations',
+    storage: 'Storage',
+    askPlaceholder: 'Ask anything… “how do chunks get merged?”',
+    send: 'Send',
+    fromCache: 'from cache',
+    cost: 'cost',
+    tokens: 'tokens',
+    approve: 'Approve',
+    reject: 'Reject',
+    reviewAll: 'Review all',
+    open: 'Open',
+    close: 'Close',
+    source: 'Source',
+    confidence: 'Confidence',
+    duration: 'Duration',
+    channel: 'Channel',
+    speaker: 'Speaker',
+    interval: 'Interval',
+    whisper: 'Whisper',
+    status: 'Status',
+    chunks: 'Chunks',
+    items: 'News items',
+    pause: 'Pause',
+    resume: 'Resume',
+    stop: 'Stop',
+    restart: 'Restart',
+    edit: 'Edit',
+    delete: 'Delete',
+    briefNow: 'Brief now',
+  },
+};
+
+// Sample transcript segments
+const SAMPLE_SEGMENTS = [
+  { start: 0,    text: 'Сегодня мы подключили RTX 5090 к Mac Studio через Thunderbolt 5 и сразу столкнулись с неожиданным поведением.' },
+  { start: 6.2,  text: 'macOS определил карту как внешний GPU, но драйвер оказался урезанным.' },
+  { start: 14.8, text: 'В Blender рендер пошёл, но только на CPU — Metal отказывался видеть CUDA-устройство.' },
+  { start: 22.1, text: 'Мы попробовали Asahi Linux на M-чипе и получили совсем другую картину.' },
+  { start: 31.5, text: 'Производительность в 3x выше, чем у встроенного GPU, и даже тише по шуму.' },
+  { start: 41.0, text: 'Но потребление в пиковых нагрузках — 540 ватт, что для Mac-экосистемы беспрецедентно.' },
+  { start: 52.3, text: 'Главный вывод: Apple не запретит, но и не поддержит — стоит готовиться к костылям.' },
+  { start: 63.7, text: 'В следующем ролике разберём, как настроить ZLUDA под macOS.' },
+  { start: 72.0, text: 'Подписывайтесь, ставьте колокольчик — и до встречи.' },
+];
+
+const SAMPLE_BRIEF_SECTIONS = [
+  {
+    title: 'Суть',
+    body: 'Эксперимент с подключением RTX 5090 к Mac Studio через Thunderbolt 5. macOS видит карту, но драйверная поддержка неполная. Asahi Linux даёт рабочий путь с 3× приростом, но с риском 540 Вт пиков.',
+  },
+  {
+    title: 'Ключевые идеи',
+    body: '— Thunderbolt 5 физически подключает eGPU, но Metal не видит CUDA.\n— Asahi Linux снимает ограничения: работают CUDA 12 и ZLUDA.\n— Шум ниже встроенного GPU за счёт большего радиатора.\n— Потребление — лимитирующий фактор для типовых БП.',
+  },
+  {
+    title: 'Факты и цифры',
+    body: '• 3× прирост на Blender Cycles против M2 Ultra.\n• Пик 540 Вт на сцене BMW-Cycles.\n• Thunderbolt 5: 80 Gbps, достаточно для PCIe 4.0 ×4.\n• ZLUDA-драйвер: open-source, MIT.',
+  },
+  {
+    title: 'Применение',
+    body: 'Может быть актуально для студий 3D-рендера, которые не готовы уходить с экосистемы macOS, но хотят CUDA-ускорение локально без облака.',
+  },
+  {
+    title: 'Черновик ТЗ',
+    body: '**Цель**: сделать тулкит настройки RTX-eGPU на Mac.\n\n**MVP**: скрипт установки ZLUDA, проверка Thunderbolt-подключения, бенчмарк.\n\n**Риски**: Apple может закрыть Thunderbolt-туннелирование в следующих версиях macOS.',
+  },
+];
+
+const SAMPLE_VIDEOS = [
+  { id: 'C4KWsmezXm4', title: 'Подключил RTX 5090 к Mac — и не ожидал такого', duration: 842, language: 'ru', briefs: 2, cost: 0.0847, date: '19 апр', dateEn: 'Apr 19' },
+  { id: 'lH5wrfNwL3k', title: 'Claude изменил фондовый рынок навсегда — туториал', duration: 1523, language: 'en', briefs: 1, cost: 0.1120, date: '18 апр', dateEn: 'Apr 18' },
+  { id: 'mssPkDuQnmY', title: 'Как построить свой Claude-ассистент для трейдинга', duration: 1187, language: 'en', briefs: 3, cost: 0.2341, date: '17 апр', dateEn: 'Apr 17' },
+  { id: 'z5u1jPKz0YQ', title: 'Open-source код ВСЁ?', duration: 634, language: 'ru', briefs: 1, cost: 0.0520, date: '15 апр', dateEn: 'Apr 15' },
+  { id: 'xQyL4k2s', title: 'Postgres 18: что нового и зачем это знать', duration: 921, language: 'en', briefs: 2, cost: 0.0932, date: '14 апр', dateEn: 'Apr 14' },
+  { id: 'qpLmn93d', title: 'Discovery-сессия: что спросить у команды на старте', duration: 2340, language: 'ru', briefs: 1, cost: 0.1804, date: '12 апр', dateEn: 'Apr 12' },
+];
+
+const SAMPLE_STREAMS = [
+  {
+    id: 'str_bloomberg_live',
+    url: 'https://www.youtube.com/watch?v=iEpJwprxDdk',
+    channel: 'Bloomberg Live',
+    speaker: 'Tom Keene',
+    status: 'active',
+    running: true,
+    intervalMin: 3,
+    whisper: 'distil-large-v3',
+    chunksTotal: 47,
+    itemsCount: 23,
+    language: 'en',
+    cost: 0.84,
+    uptime: '2ч 21мин',
+    uptimeEn: '2h 21m',
+    spark: [2,4,3,5,8,6,7,5,9,7,8,6,9,11,8,10,12],
+  },
+  {
+    id: 'str_rbc_news',
+    url: 'https://www.youtube.com/watch?v=FK3dav4bA4s',
+    channel: 'РБК',
+    speaker: null,
+    status: 'active',
+    running: true,
+    intervalMin: 5,
+    whisper: 'medium',
+    chunksTotal: 12,
+    itemsCount: 8,
+    language: 'ru',
+    cost: 0.21,
+    uptime: '58мин',
+    uptimeEn: '58m',
+    spark: [1,2,2,3,3,4,5,4,6,5,7,6,8],
+  },
+  {
+    id: 'str_cnn_world',
+    url: 'https://www.youtube.com/watch?v=w_Ma8oQLmSM',
+    channel: 'CNN Breaking',
+    speaker: 'Anderson Cooper',
+    status: 'paused',
+    running: false,
+    intervalMin: 2,
+    whisper: 'small',
+    chunksTotal: 140,
+    itemsCount: 62,
+    language: 'en',
+    cost: 1.46,
+    uptime: '5ч 12мин',
+    uptimeEn: '5h 12m',
+    spark: [3,4,5,4,6,5,7,6,8,5,6,4,3,2,1,1,2],
+  },
+];
+
+const SAMPLE_NEWS = [
+  {
+    id: 101, status: 'draft',
+    headline: 'ФРС намекнула на паузу в повышении ставки до конца 2026 года',
+    quote: 'We see a clear path to neutral by year-end — but we are not there yet.',
+    category: 'finance',
+    tags: ['fed', 'rates', 'macro'],
+    source: 'Bloomberg Live', speaker: 'Tom Keene',
+    time: '14:23', duration: '0:42', confidence: 0.92,
+    concept: 'central bank pause',
+    isDuplicate: false,
+  },
+  {
+    id: 102, status: 'draft',
+    headline: 'Tesla отзывает 240 000 машин из-за уязвимости в автопилоте',
+    quote: 'It\'s a software update, not a hardware recall — but we are taking it seriously.',
+    category: 'tech',
+    tags: ['tesla', 'recall', 'autopilot'],
+    source: 'Bloomberg Live', speaker: 'Tom Keene',
+    time: '14:08', duration: '1:04', confidence: 0.88,
+    concept: 'vehicle recall',
+    isDuplicate: false,
+  },
+  {
+    id: 103, status: 'draft',
+    headline: 'Anthropic выпустила новую модель Claude для финансов',
+    quote: 'Это первая модель, специально обученная на SEC-отчётности и bloomberg-ленте.',
+    category: 'ai',
+    tags: ['anthropic', 'claude', 'finance'],
+    source: 'РБК', speaker: null,
+    time: '13:54', duration: '0:38', confidence: 0.81,
+    concept: 'ai model release',
+    isDuplicate: true, dupSim: 0.89,
+  },
+  {
+    id: 104, status: 'draft',
+    headline: 'ЕС вводит углеродный налог на импорт стали с июля',
+    quote: 'Это крупнейшая климатическая мера за последние пять лет.',
+    category: 'policy',
+    tags: ['eu', 'carbon', 'trade'],
+    source: 'РБК', speaker: null,
+    time: '13:41', duration: '0:51', confidence: 0.94,
+    concept: 'carbon tax',
+    isDuplicate: false,
+  },
+  {
+    id: 105, status: 'approved',
+    headline: 'OpenAI подтвердила приобретение Anysphere за $3 млрд',
+    quote: 'We will integrate Cursor as a first-party product.',
+    category: 'tech',
+    tags: ['openai', 'acquisition', 'dev-tools'],
+    source: 'Bloomberg Live', speaker: 'Tom Keene',
+    time: '12:18', duration: '1:22', confidence: 0.96,
+    concept: 'tech acquisition',
+    isDuplicate: false,
+  },
+  {
+    id: 106, status: 'approved',
+    headline: 'Nvidia анонсировала следующее поколение Blackwell Ultra',
+    quote: 'Our pace of innovation is now quarterly, not annually.',
+    category: 'tech',
+    tags: ['nvidia', 'gpu', 'blackwell'],
+    source: 'Bloomberg Live', speaker: 'Tom Keene',
+    time: '11:55', duration: '0:58', confidence: 0.93,
+    concept: 'gpu announcement',
+    isDuplicate: false,
+  },
+];
+
+const CATEGORY_COLORS = {
+  finance:  { bg: 'oklch(0.95 0.04 75)',  fg: 'oklch(0.42 0.14 75)'  },
+  tech:     { bg: 'oklch(0.95 0.03 265)', fg: 'oklch(0.40 0.15 265)' },
+  ai:       { bg: 'oklch(0.94 0.05 155)', fg: 'oklch(0.40 0.13 155)' },
+  policy:   { bg: 'oklch(0.95 0.03 25)',  fg: 'oklch(0.42 0.16 25)'  },
+  science:  { bg: 'oklch(0.95 0.03 195)', fg: 'oklch(0.40 0.14 195)' },
+  sports:   { bg: 'oklch(0.95 0.04 140)', fg: 'oklch(0.40 0.13 140)' },
+  other:    { bg: 'oklch(0.95 0.01 90)',  fg: 'oklch(0.40 0.03 90)'  },
+};
+
+const INTEGRATIONS = [
+  { id: 'supadata', name: 'Supadata', kind: 'cloud', desc: 'Транскрипты YouTube', descEn: 'YouTube transcripts', configured: true, masked: 'sup_…k9f2', website: 'supadata.ai' },
+  { id: 'anthropic', name: 'Anthropic Claude', kind: 'cloud', desc: 'Генерация брифов и новостей', descEn: 'Briefs and news extraction', configured: true, masked: 'sk-ant-…a1b2', website: 'console.anthropic.com' },
+  { id: 'openai', name: 'OpenAI', kind: 'cloud', desc: 'Embeddings для дедупа', descEn: 'Embeddings for deduplication', configured: true, masked: 'sk-proj-…c3d4', website: 'platform.openai.com' },
+  { id: 'pexels', name: 'Pexels', kind: 'cloud', desc: 'Фото-иллюстрации к новостям', descEn: 'Stock photos for news', configured: false, masked: null, website: 'pexels.com' },
+  { id: 'fastembed', name: 'fastembed', kind: 'local', desc: 'Локальные ONNX-эмбеддинги', descEn: 'Local ONNX embeddings', configured: true, website: 'github.com/qdrant/fastembed' },
+  { id: 'ollama', name: 'Ollama', kind: 'local', desc: 'Локальные модели', descEn: 'Local LLM runner', configured: false, website: 'ollama.ai' },
+];
+
+const ASSISTANT_MESSAGES_INIT = [
+  { role: 'assistant', text: 'Я знаю про пайплайн, БД, настройки и коды ошибок. Спроси что-то — или попроси сделать.' },
+  { role: 'user', text: 'Почему последний стрим завис на чанке 47?' },
+  { role: 'assistant', text: 'Посмотрел. Чанк 47 в Bloomberg Live застрял в статусе `transcribing` уже 8 минут. Это выше нормы (~30с на 2-мин чанк).\n\nПохоже на нехватку VRAM: при модели `distil-large-v3` на RTX 2060 (6GB) иногда случается OOM. В логах вижу `CUDA out of memory`.\n\nХочешь я переключу этот стрим на `medium` и рестартну обработку застрявших чанков?', hasAction: true },
+];
+
+Object.assign(window, {
+  I18N, SAMPLE_SEGMENTS, SAMPLE_BRIEF_SECTIONS,
+  SAMPLE_VIDEOS, SAMPLE_STREAMS, SAMPLE_NEWS,
+  CATEGORY_COLORS, INTEGRATIONS, ASSISTANT_MESSAGES_INIT,
+});
+
+
+// === primitives.jsx ===
+// Shared primitives: icons, sparkline, chips, modal, top bar
+
+const Icon = {
+  search: () => <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14" strokeLinecap="round"/></svg>,
+  play:   () => <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M3 2l7 4-7 4z"/></svg>,
+  pause:  () => <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><rect x="3" y="2" width="2.5" height="8"/><rect x="6.5" y="2" width="2.5" height="8"/></svg>,
+  stop:   () => <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><rect x="2.5" y="2.5" width="7" height="7"/></svg>,
+  arrow:  () => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M3 6h6M6 3l3 3-3 3" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+  plus:   () => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M6 2v8M2 6h8" strokeLinecap="round"/></svg>,
+  check:  () => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2.5 6.5l2.5 2.5 4.5-5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+  x:      () => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M3 3l6 6M9 3l-6 6" strokeLinecap="round"/></svg>,
+  copy:   () => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="3.5" y="3.5" width="6" height="6" rx="1"/><path d="M2 6.5V2.5A.5.5 0 012.5 2h4"/></svg>,
+  ext:    () => <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M5 3H3v6h6V7M7 3h2v2M5 7l4-4" strokeLinecap="round"/></svg>,
+  spark:  () => <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor"><path d="M6 1l1.2 3.5L10.5 6 7.2 7.5 6 11l-1.2-3.5L1.5 6l3.3-1.5z"/></svg>,
+  mic:    () => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="4.5" y="1.5" width="3" height="6" rx="1.5"/><path d="M2.5 6a3.5 3.5 0 007 0M6 9.5v1.5"/></svg>,
+  globe:  () => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><circle cx="6" cy="6" r="4.5"/><path d="M1.5 6h9M6 1.5c1.5 2 1.5 7 0 9M6 1.5c-1.5 2-1.5 7 0 9"/></svg>,
+  setting:() => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3"><circle cx="6" cy="6" r="1.5"/><path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.5 2.5l1 1M8.5 8.5l1 1M2.5 9.5l1-1M8.5 3.5l1-1"/></svg>,
+};
+
+function Chip({ children, color, style, className, onClick }) {
+  const s = {
+    ...(color ? { background: color.bg, color: color.fg, borderColor: 'transparent' } : null),
+    ...style,
+  };
+  return <span className={`chip ${className || ''}`} style={s} onClick={onClick}>{children}</span>;
+}
+
+function StatusChip({ status }) {
+  const map = {
+    active:  { dot: 'var(--ok)',   bg: 'var(--ok-soft)',   fg: 'oklch(0.35 0.14 155)', label: 'active' },
+    paused:  { dot: 'var(--warn)', bg: 'var(--warn-soft)', fg: 'oklch(0.40 0.15 75)',  label: 'paused' },
+    stopped: { dot: 'var(--mute-2)', bg: 'var(--panel)',   fg: 'var(--mute)',           label: 'stopped'},
+    draft:   { dot: 'var(--mute)', bg: 'var(--panel)',     fg: 'var(--mute)',           label: 'draft'  },
+    approved:{ dot: 'var(--ok)',   bg: 'var(--ok-soft)',   fg: 'oklch(0.35 0.14 155)', label: 'approved'},
+    rejected:{ dot: 'var(--bad)',  bg: 'var(--bad-soft)',  fg: 'oklch(0.42 0.17 25)',  label: 'rejected'},
+  }[status] || { dot: 'var(--mute-2)', bg: 'var(--panel)', fg: 'var(--mute)', label: status };
+  return (
+    <span className="chip" style={{ background: map.bg, color: map.fg, borderColor: 'transparent' }}>
+      <span className="chip-dot" style={{ background: map.dot }} />
+      <span className="mono" style={{ fontSize: 10.5 }}>{map.label}</span>
+    </span>
+  );
+}
+
+function Sparkline({ data, color = 'var(--acc)', fill = 'var(--acc-soft)', height = 28 }) {
+  const w = 120;
+  const max = Math.max(...data, 1);
+  const min = Math.min(...data, 0);
+  const step = w / Math.max(data.length - 1, 1);
+  const points = data.map((v, i) => [i * step, height - ((v - min) / (max - min || 1)) * (height - 4) - 2]);
+  const path = points.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+  const fillPath = path + ` L ${w} ${height} L 0 ${height} Z`;
+  return (
+    <svg viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none" style={{ width: '100%', height }}>
+      <path d={fillPath} fill={fill} opacity="0.5" />
+      <path d={path} stroke={color} strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={points[points.length - 1][0]} cy={points[points.length - 1][1]} r="2" fill={color} />
+    </svg>
+  );
+}
+
+function fmtDur(sec) {
+  if (!sec) return '—';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  if (m >= 60) return `${Math.floor(m/60)}:${(m%60).toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+  return `${m}:${s.toString().padStart(2,'0')}`;
+}
+
+function TopBar({ active, onTab, lang, onLang, t }) {
+  const tabs = ['video', 'streams', 'news', 'assistant', 'settings'];
+  return (
+    <header style={{
+      position: 'sticky', top: 0, zIndex: 30,
+      background: 'color-mix(in oklch, var(--bg) 90%, transparent)',
+      backdropFilter: 'blur(12px)',
+      borderBottom: '1px solid var(--line)',
+    }}>
+      <div style={{
+        maxWidth: 1280, margin: '0 auto', padding: '14px 32px',
+        display: 'flex', alignItems: 'center', gap: 32,
+      }}>
+        {/* Wordmark */}
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexShrink: 0 }}>
+          <span className="serif" style={{ fontSize: 26, letterSpacing: '-0.02em' }}>VideoText</span>
+          <span className="mono" style={{ fontSize: 10, color: 'var(--mute-2)' }}>v0.4</span>
+        </div>
+
+        {/* Tabs */}
+        <nav style={{ display: 'flex', gap: 2, flex: 1 }}>
+          {tabs.map((id) => (
+            <button
+              key={id}
+              onClick={() => onTab(id)}
+              style={{
+                padding: '8px 14px', borderRadius: 8,
+                fontSize: 13.5, fontWeight: 500,
+                color: active === id ? 'var(--ink)' : 'var(--mute)',
+                background: active === id ? 'var(--surface)' : 'transparent',
+                border: active === id ? '1px solid var(--line)' : '1px solid transparent',
+                position: 'relative',
+              }}
+            >
+              {t.tabs[id]}
+              {active === id && (
+                <span className="serif" style={{
+                  position:'absolute', top:-4, right:-4,
+                  fontSize: 14, color: 'var(--acc)', fontStyle:'italic',
+                }}>·</span>
+              )}
+            </button>
+          ))}
+        </nav>
+
+        {/* Right cluster */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+          <button className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 12, color: 'var(--mute)' }}>
+            <Icon.search />
+            <span>Поиск</span>
+            <span className="kbd">⌘K</span>
+          </button>
+          <div style={{ display: 'flex', background: 'var(--panel)', borderRadius: 8, padding: 2, gap: 2 }}>
+            {['ru', 'en'].map((l) => (
+              <button key={l} onClick={() => onLang(l)}
+                style={{
+                  padding: '4px 10px', fontSize: 11.5, fontWeight: 600,
+                  borderRadius: 6, textTransform: 'uppercase', letterSpacing: '0.08em',
+                  background: lang === l ? 'var(--surface)' : 'transparent',
+                  color: lang === l ? 'var(--ink)' : 'var(--mute)',
+                  boxShadow: lang === l ? '0 1px 2px rgba(0,0,0,0.04)' : 'none',
+                }}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <div style={{
+            width: 32, height: 32, borderRadius: 999,
+            background: 'var(--ink)', color:'#fff',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            fontSize: 12, fontWeight: 600,
+          }}>AF</div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function Modal({ open, onClose, children, width }) {
+  React.useEffect(() => {
+    if (!open) return;
+    const h = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div className="modal-backdrop fade-in" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: width || 720 }} onClick={(e) => e.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function EditorialHeader({ eyebrow, title, accent, sub }) {
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <div className="label-xs" style={{ color: 'var(--acc)' }}>{eyebrow}</div>
+      <h1 className="serif" style={{
+        fontSize: 48, lineHeight: 1.05, margin: '10px 0 6px',
+        letterSpacing: '-0.02em',
+      }}>
+        {title}{accent && <span style={{ fontStyle: 'italic', color: 'var(--acc)' }}> {accent}</span>}
+      </h1>
+      {sub && <p style={{ color: 'var(--mute)', fontSize: 15, maxWidth: 640, margin: 0 }}>{sub}</p>}
+    </div>
+  );
+}
+
+function Section({ label, right, children, style }) {
+  return (
+    <section style={{ marginBottom: 40, ...style }}>
+      <div style={{
+        display:'flex', alignItems:'baseline', justifyContent:'space-between',
+        marginBottom: 14, gap: 16,
+      }}>
+        <div className="label-xs">{label}</div>
+        {right}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+Object.assign(window, {
+  Icon, Chip, StatusChip, Sparkline, fmtDur,
+  TopBar, Modal, EditorialHeader, Section,
+});
+
+
+// === video.jsx ===
+// Tab: Video
+function VideoTab({ t, lang }) {
+  const [url, setUrl] = React.useState('https://www.youtube.com/watch?v=C4KWsmezXm4');
+  const [busy, setBusy] = React.useState(false);
+  const [result, setResult] = React.useState({ ready: true });
+  const [opts, setOpts] = React.useState({
+    briefLang: 'ru', model: 'sonnet', format: 'markdown', backend: 'auto',
+    onlyTranscript: false, forceRefresh: false,
+  });
+  const [activeVideo, setActiveVideo] = React.useState(SAMPLE_VIDEOS[0]);
+  const [copyHint, setCopyHint] = React.useState('');
+
+  function run() {
+    setBusy(true); setResult({});
+    setTimeout(() => { setBusy(false); setResult({ ready: true, fromCache: opts.forceRefresh ? false : true }); }, 1400);
+  }
+
+  return (
+    <div className="fade-in">
+      <EditorialHeader
+        eyebrow="Видео → бриф"
+        title="Превратить"
+        accent="час просмотра в минуту чтения."
+        sub={lang === 'ru'
+          ? 'Вставь YouTube-ссылку — извлечём транскрипт, попросим Claude собрать бриф и сохраним в локальную БД.'
+          : 'Paste a YouTube link — we pull the transcript, ask Claude for a brief, and save it locally.'}
+      />
+
+      {/* URL input */}
+      <div className="card" style={{ padding: 20, marginBottom: 24, borderRadius: 14 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'stretch' }}>
+          <div style={{ flex: 1, position: 'relative' }}>
+            <input
+              className="text-input mono"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && !busy && run()}
+              placeholder={t.videoInputPh}
+              style={{ paddingLeft: 40 }}
+            />
+            <div style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--mute-2)' }}>
+              <Icon.search />
+            </div>
+          </div>
+          <button
+            className={busy ? 'btn' : 'btn btn-primary'}
+            disabled={busy || !url}
+            onClick={run}
+            style={{ padding: '0 22px', minWidth: 130 }}
+          >
+            {busy ? (
+              <><span style={{
+                width: 10, height: 10, border: '1.5px solid currentColor', borderTopColor: 'transparent',
+                borderRadius: 999, display: 'inline-block',
+                animation: 'spin 0.9s linear infinite',
+              }}/>{t.running}…</>
+            ) : (<><Icon.arrow />{t.run}</>)}
+          </button>
+        </div>
+
+        {/* Options row */}
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: 18,
+          marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--line)',
+          fontSize: 13, color: 'var(--mute)',
+        }}>
+          <Inline label={t.lang}>
+            <SelectMini value={opts.briefLang} onChange={(v) => setOpts({ ...opts, briefLang: v })}
+              options={[['ru','ru'], ['en','en']]} />
+          </Inline>
+          <Inline label={t.model}>
+            <SelectMini value={opts.model} onChange={(v) => setOpts({ ...opts, model: v })}
+              options={[['sonnet','sonnet-4.6'], ['opus','opus-4.7'], ['haiku','haiku-4.5']]} />
+          </Inline>
+          <Inline label={t.format}>
+            <SelectMini value={opts.format} onChange={(v) => setOpts({ ...opts, format: v })}
+              options={[['markdown','markdown'], ['json','json']]} />
+          </Inline>
+          <Inline label={t.backend}>
+            <SelectMini value={opts.backend} onChange={(v) => setOpts({ ...opts, backend: v })}
+              options={[['auto','auto+fallback'], ['supadata','supadata'], ['ytdlp','yt-dlp']]} />
+          </Inline>
+          <CheckMini checked={opts.onlyTranscript} onChange={(v) => setOpts({ ...opts, onlyTranscript: v })}>
+            {t.onlyTranscript}
+          </CheckMini>
+          <CheckMini checked={opts.forceRefresh} onChange={(v) => setOpts({ ...opts, forceRefresh: v })}>
+            {t.forceRefresh}
+          </CheckMini>
+        </div>
+      </div>
+
+      {/* Video result */}
+      {!busy && result.ready && (
+        <div className="fade-in" style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 28 }}>
+          {/* LEFT: transcript + metadata */}
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 10 }}>
+                {result.fromCache !== false && <Chip>⌁ {t.fromCache}</Chip>}
+                <Chip><span className="mono" style={{ fontSize: 10.5 }}>{activeVideo.language}</span></Chip>
+                <Chip><span className="mono" style={{ fontSize: 10.5 }}>{fmtDur(activeVideo.duration)}</span></Chip>
+                <Chip><span className="mono" style={{ fontSize: 10.5 }}>supadata</span></Chip>
+              </div>
+              <h2 className="serif" style={{ fontSize: 30, lineHeight: 1.15, margin: '0 0 6px', letterSpacing: '-0.015em' }}>
+                {activeVideo.title}
+              </h2>
+              <div className="mono" style={{ fontSize: 12, color: 'var(--mute-2)' }}>
+                {activeVideo.id} <span className="sep">·</span> {SAMPLE_SEGMENTS.length} сегм. <span className="sep">·</span> 2847 слов
+              </div>
+            </div>
+
+            <Section label={t.transcript} right={
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 12, color: 'var(--mute)' }}
+                  onClick={() => { navigator.clipboard?.writeText(SAMPLE_SEGMENTS.map(s => s.text).join('\n')); setCopyHint('copy-ok'); setTimeout(() => setCopyHint(''), 1200); }}>
+                  <Icon.copy /> {copyHint === 'copy-ok' ? '✓' : 'copy'}
+                </button>
+                <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 12, color: 'var(--mute)' }}>
+                  <Icon.ext /> .txt
+                </button>
+              </div>
+            }>
+              <div className="card scroll-thin" style={{
+                padding: '14px 18px', maxHeight: 440, overflowY: 'auto', fontSize: 13.5, lineHeight: 1.7,
+              }}>
+                {SAMPLE_SEGMENTS.map((s, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 14, paddingTop: i === 0 ? 0 : 6 }}>
+                    <span className="mono" style={{
+                      color: 'var(--mute-2)', fontSize: 11, width: 44, flexShrink: 0, paddingTop: 3,
+                    }}>{fmtDur(s.start)}</span>
+                    <span style={{ color: 'var(--ink-2)' }}>{s.text}</span>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          </div>
+
+          {/* RIGHT: brief */}
+          <div>
+            <Section label={t.brief} right={
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+                <span className="mono" style={{ color: 'var(--mute)' }}>claude-sonnet-4.6</span>
+                {result.fromCache ? (
+                  <Chip style={{ background: 'var(--acc-soft)', color: 'var(--acc-ink)', borderColor: 'transparent' }}>
+                    ⌁ 0 токенов
+                  </Chip>
+                ) : (
+                  <span className="mono" style={{ color: 'var(--ink)' }}>$0.0847</span>
+                )}
+              </div>
+            }>
+              <article>
+                {SAMPLE_BRIEF_SECTIONS.map((sec, i) => (
+                  <div key={i} style={{
+                    paddingBottom: 18, marginBottom: 18,
+                    borderBottom: i < SAMPLE_BRIEF_SECTIONS.length - 1 ? '1px solid var(--line)' : 'none',
+                  }}>
+                    <h3 className="serif" style={{ fontSize: 22, margin: '0 0 8px', letterSpacing: '-0.01em' }}>
+                      {sec.title}
+                    </h3>
+                    <div style={{ fontSize: 14, lineHeight: 1.65, color: 'var(--ink-2)', whiteSpace: 'pre-wrap' }}>
+                      {sec.body.split('**').map((part, idx) =>
+                        idx % 2 === 1 ? <strong key={idx}>{part}</strong> : <React.Fragment key={idx}>{part}</React.Fragment>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </article>
+              <div style={{
+                display: 'flex', gap: 18, flexWrap: 'wrap',
+                fontSize: 11, color: 'var(--mute-2)', marginTop: 10,
+              }}>
+                <span className="mono">in <span style={{ color: 'var(--ink)' }}>2 847</span></span>
+                <span className="mono">out <span style={{ color: 'var(--ink)' }}>1 230</span></span>
+                <span className="mono">cache r <span style={{ color: 'var(--ink)' }}>2 600</span></span>
+              </div>
+            </Section>
+          </div>
+        </div>
+      )}
+
+      {busy && (
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--mute)' }}>
+          <div className="serif" style={{ fontSize: 24, color: 'var(--ink)', marginBottom: 6 }}>
+            Достаю транскрипт…
+          </div>
+          <div style={{ fontSize: 13 }}>Supadata → Claude. Обычно 5–15 секунд.</div>
+        </div>
+      )}
+
+      {/* History */}
+      <Section label={t.history + ' · ' + SAMPLE_VIDEOS.length} right={
+        <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 12, color: 'var(--mute)' }}>обновить</button>
+      } style={{ marginTop: 56 }}>
+        <div className="card" style={{ overflow: 'hidden' }}>
+          {SAMPLE_VIDEOS.map((v, i) => (
+            <button key={v.id} onClick={() => setActiveVideo(v)}
+              className="row-h"
+              style={{
+                width: '100%', padding: '14px 20px', textAlign: 'left',
+                display: 'grid', gridTemplateColumns: '1fr auto auto auto auto',
+                gap: 24, alignItems: 'center',
+                borderTop: i === 0 ? 'none' : '1px solid var(--line)',
+                background: activeVideo.id === v.id ? 'var(--panel)' : 'transparent',
+              }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{
+                  fontSize: 14.5, fontWeight: 500, marginBottom: 2,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>{v.title}</div>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--mute-2)' }}>{v.id}</div>
+              </div>
+              <div className="mono" style={{ fontSize: 11.5, color: 'var(--mute)' }}>
+                {fmtDur(v.duration)}
+              </div>
+              <div>
+                <Chip><span className="mono" style={{ fontSize: 10.5 }}>{v.language}</span></Chip>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--mute)' }}>
+                <span style={{ color: 'var(--ink)' }}>{v.briefs}</span> бриф{v.briefs > 1 ? 'а' : ''}
+              </div>
+              <div className="mono" style={{ fontSize: 12, color: 'var(--ink)', width: 72, textAlign: 'right' }}>
+                ${v.cost.toFixed(4)}
+              </div>
+            </button>
+          ))}
+        </div>
+      </Section>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+    </div>
+  );
+}
+
+function Inline({ label, children }) {
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ color: 'var(--mute)' }}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function SelectMini({ value, onChange, options }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)}
+      style={{
+        border: 'none', borderBottom: '1px solid var(--line-2)',
+        background: 'transparent', padding: '2px 16px 2px 4px',
+        fontSize: 13, color: 'var(--ink)', cursor: 'pointer',
+        appearance: 'none',
+        backgroundImage: 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'8\' height=\'8\' viewBox=\'0 0 8 8\'><path d=\'M1 3l3 3 3-3\' stroke=\'%239A959E\' fill=\'none\' stroke-width=\'1.2\'/></svg>")',
+        backgroundRepeat: 'no-repeat', backgroundPosition: 'right 2px center',
+      }}>
+      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  );
+}
+
+function CheckMini({ checked, onChange, children }) {
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span>{children}</span>
+    </label>
+  );
+}
+
+Object.assign(window, { VideoTab, Inline, SelectMini, CheckMini });
+
+
+// === streams.jsx ===
+// Tab: Streams
+function StreamsTab({ t, lang }) {
+  const [showForm, setShowForm] = React.useState(false);
+  const [streams, setStreams] = React.useState(SAMPLE_STREAMS);
+  const [form, setForm] = React.useState({
+    url: '', channel: '', speaker: '',
+    intervalMin: 3, whisper: 'distil-large-v3',
+    makeSummary: false, template: 'news', autoBrief: true,
+  });
+
+  function toggleStatus(id, next) {
+    setStreams(streams.map(s => s.id === id ? { ...s, status: next, running: next === 'active' } : s));
+  }
+
+  function addStream() {
+    if (!form.url || !form.channel) return;
+    const newS = {
+      id: 'str_' + Math.random().toString(36).slice(2, 8),
+      url: form.url, channel: form.channel, speaker: form.speaker || null,
+      status: 'active', running: true,
+      intervalMin: form.intervalMin, whisper: form.whisper,
+      chunksTotal: 0, itemsCount: 0, language: 'ru', cost: 0,
+      uptime: '0мин', uptimeEn: '0m',
+      spark: [0, 0, 0],
+    };
+    setStreams([newS, ...streams]);
+    setForm({ url: '', channel: '', speaker: '', intervalMin: 3, whisper: 'distil-large-v3', makeSummary: false, template: 'news', autoBrief: true });
+    setShowForm(false);
+  }
+
+  const totalItems = streams.reduce((s, x) => s + x.itemsCount, 0);
+  const totalCost = streams.reduce((s, x) => s + x.cost, 0);
+  const activeCount = streams.filter(s => s.status === 'active').length;
+
+  return (
+    <div className="fade-in">
+      <EditorialHeader
+        eyebrow="Live-мониторинг"
+        title="Слушать эфир,"
+        accent="вытягивать новости."
+        sub={lang === 'ru'
+          ? 'Режем live-поток на чанки, локальный whisper расшифровывает, Claude извлекает утверждения. Новости уходят в модерацию.'
+          : 'Chop live streams into chunks, local whisper transcribes, Claude extracts claims. Items land in moderation.'}
+      />
+
+      {/* Stats strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 0,
+        border: '1px solid var(--line)', borderRadius: 14, background: 'var(--surface)',
+        marginBottom: 28, overflow: 'hidden',
+      }}>
+        <Stat label="Активно" value={activeCount} total={streams.length} />
+        <Stat label="Новостей сегодня" value={totalItems} divider />
+        <Stat label="Затраты за 24ч" value={'USD ' + totalCost.toFixed(2)} divider />
+        <Stat label="GPU usage" value="74%" divider sub="RTX 2060 · 6GB" />
+      </div>
+
+      {/* New stream trigger */}
+      <Section label={t.activeStreams + ' · ' + streams.length} right={
+        <button className="btn btn-primary" style={{ fontSize: 12.5, padding: '7px 14px' }}
+          onClick={() => setShowForm(!showForm)}>
+          <Icon.plus />{showForm ? t.close : t.newStream}
+        </button>
+      }>
+        {showForm && (
+          <div className="card fade-in" style={{ padding: 20, marginBottom: 18, background: 'var(--panel)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+              <div>
+                <div className="label-xs" style={{ marginBottom: 6 }}>URL live-эфира</div>
+                <input className="text-input mono" placeholder="https://youtube.com/watch?v=…"
+                  value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
+              </div>
+              <div>
+                <div className="label-xs" style={{ marginBottom: 6 }}>Название канала</div>
+                <input className="text-input" placeholder="Bloomberg Live"
+                  value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })} />
+              </div>
+              <div>
+                <div className="label-xs" style={{ marginBottom: 6 }}>Ведущий</div>
+                <input className="text-input" placeholder="опционально"
+                  value={form.speaker} onChange={(e) => setForm({ ...form, speaker: e.target.value })} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: 10 }}>
+                <div>
+                  <div className="label-xs" style={{ marginBottom: 6 }}>Интервал</div>
+                  <input className="text-input mono" type="number" min="1" max="30"
+                    value={form.intervalMin} onChange={(e) => setForm({ ...form, intervalMin: +e.target.value })} />
+                </div>
+                <div>
+                  <div className="label-xs" style={{ marginBottom: 6 }}>Whisper</div>
+                  <select className="text-input" value={form.whisper}
+                    onChange={(e) => setForm({ ...form, whisper: e.target.value })}>
+                    <option>tiny</option><option>small</option><option>medium</option>
+                    <option>large-v3</option><option>distil-large-v3</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 12.5,
+              paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.makeSummary}
+                  onChange={(e) => setForm({ ...form, makeSummary: e.target.checked })} />
+                Сводный бриф на весь стрим
+              </label>
+              {form.makeSummary && (
+                <>
+                  <SelectMini value={form.template} onChange={(v) => setForm({ ...form, template: v })}
+                    options={[['news','news'], ['full','full + ТЗ']]} />
+                  <CheckMini checked={form.autoBrief} onChange={(v) => setForm({ ...form, autoBrief: v })}>
+                    авто на стопе
+                  </CheckMini>
+                </>
+              )}
+              <div style={{ flex: 1 }} />
+              <button className="btn" onClick={() => setShowForm(false)}>Отмена</button>
+              <button className="btn btn-primary" onClick={addStream} disabled={!form.url || !form.channel}>
+                <Icon.play /> Запустить
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {streams.map((s) => <StreamRow key={s.id} s={s} t={t} lang={lang} onStatus={toggleStatus} />)}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function Stat({ label, value, total, sub, divider }) {
+  return (
+    <div style={{
+      padding: '18px 22px',
+      borderLeft: divider ? '1px solid var(--line)' : 'none',
+    }}>
+      <div className="label-xs">{label}</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+        <span className="serif" style={{ fontSize: 32, letterSpacing: '-0.02em' }}>{value}</span>
+        {total !== undefined && <span className="mono" style={{ fontSize: 12, color: 'var(--mute-2)' }}>/ {total}</span>}
+      </div>
+      {sub && <div className="mono" style={{ fontSize: 10.5, color: 'var(--mute-2)', marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function StreamRow({ s, t, lang, onStatus }) {
+  return (
+    <div className="card" style={{ padding: 18, display: 'grid',
+      gridTemplateColumns: '1fr 140px 200px auto', gap: 20, alignItems: 'center',
+    }}>
+      {/* Channel info */}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          {s.status === 'active' && s.running && <span className="live-dot" />}
+          <span className="serif" style={{ fontSize: 20, letterSpacing: '-0.01em' }}>{s.channel}</span>
+          <StatusChip status={s.status} />
+          {s.speaker && (
+            <span style={{ color: 'var(--mute)', fontSize: 12 }}>
+              · {s.speaker}
+            </span>
+          )}
+        </div>
+        <div className="mono" style={{ fontSize: 11, color: 'var(--mute-2)',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 6 }}>
+          {s.url}
+        </div>
+        <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--mute)' }}>
+          <span><span className="mono" style={{ color: 'var(--ink)' }}>{s.intervalMin}</span>мин чанки</span>
+          <span>whisper <span className="mono" style={{ color: 'var(--ink)' }}>{s.whisper}</span></span>
+          <span>аптайм <span className="mono" style={{ color: 'var(--ink)' }}>{lang === 'ru' ? s.uptime : s.uptimeEn}</span></span>
+        </div>
+      </div>
+
+      {/* Sparkline */}
+      <div>
+        <div className="label-xs" style={{ marginBottom: 4 }}>Темп новостей</div>
+        <Sparkline data={s.spark} />
+      </div>
+
+      {/* Counters */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div>
+          <div className="label-xs">Чанков</div>
+          <div className="serif" style={{ fontSize: 22 }}>{s.chunksTotal}</div>
+        </div>
+        <div>
+          <div className="label-xs">Новостей</div>
+          <div className="serif" style={{ fontSize: 22 }}>{s.itemsCount}</div>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 6 }}>
+        {s.status === 'active' ? (
+          <button className="btn" style={{ padding: '6px 10px' }} onClick={() => onStatus(s.id, 'paused')}>
+            <Icon.pause />
+          </button>
+        ) : s.status === 'paused' ? (
+          <button className="btn btn-primary" style={{ padding: '6px 10px' }} onClick={() => onStatus(s.id, 'active')}>
+            <Icon.play />
+          </button>
+        ) : (
+          <button className="btn" style={{ padding: '6px 10px' }} onClick={() => onStatus(s.id, 'active')}>
+            <Icon.play />
+          </button>
+        )}
+        <button className="btn" style={{ padding: '6px 10px' }} onClick={() => onStatus(s.id, 'stopped')}>
+          <Icon.stop />
+        </button>
+        <button className="btn btn-ghost" style={{ padding: '6px 10px', color: 'var(--mute)', fontSize: 12 }}>
+          ред.
+        </button>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { StreamsTab });
+
+
+// === news.jsx ===
+// Tab: News
+function NewsTab({ t, lang }) {
+  const [news, setNews] = React.useState(SAMPLE_NEWS);
+  const [filter, setFilter] = React.useState('draft');
+  const [openItem, setOpenItem] = React.useState(null);
+  const [hideDupes, setHideDupes] = React.useState(false);
+
+  const filtered = news.filter(n => {
+    if (filter !== 'all' && n.status !== filter) return false;
+    if (hideDupes && n.isDuplicate) return false;
+    return true;
+  });
+
+  function setStatus(id, status) {
+    setNews(news.map(n => n.id === id ? { ...n, status } : n));
+  }
+
+  const counts = {
+    all: news.length,
+    draft: news.filter(n => n.status === 'draft').length,
+    approved: news.filter(n => n.status === 'approved').length,
+    rejected: news.filter(n => n.status === 'rejected').length,
+  };
+
+  return (
+    <div className="fade-in">
+      <EditorialHeader
+        eyebrow="Лента новостей"
+        title="Сегодня —"
+        accent={counts.draft + ' на столе редактора.'}
+        sub={lang === 'ru'
+          ? 'Каждая новость вытащена из live-эфира, разобрана на headline + quote + категорию. Одобри, отклони или перенастрой.'
+          : 'Every story was pulled live, split into headline + quote + category. Approve, reject, or tune.'}
+      />
+
+      {/* Filter tabs */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 18, flexWrap: 'wrap' }}>
+        {[
+          ['draft', 'Модерация'],
+          ['approved', 'Одобрено'],
+          ['rejected', 'Отклонено'],
+          ['all', 'Всё'],
+        ].map(([id, lbl]) => (
+          <button key={id} onClick={() => setFilter(id)}
+            style={{
+              padding: '6px 12px', borderRadius: 8, fontSize: 13,
+              background: filter === id ? 'var(--ink)' : 'var(--surface)',
+              color: filter === id ? '#fff' : 'var(--mute)',
+              border: '1px solid ' + (filter === id ? 'var(--ink)' : 'var(--line)'),
+              fontWeight: 500,
+            }}>
+            {lbl}
+            <span className="mono" style={{
+              marginLeft: 8, fontSize: 10.5,
+              color: filter === id ? 'rgba(255,255,255,0.6)' : 'var(--mute-2)',
+            }}>{counts[id]}</span>
+          </button>
+        ))}
+        <div style={{ flex: 1 }} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--mute)' }}>
+          <input type="checkbox" checked={hideDupes} onChange={(e) => setHideDupes(e.target.checked)} />
+          Скрыть дубликаты
+        </label>
+        <button className="btn" style={{ padding: '6px 12px', fontSize: 12 }}>
+          Экспорт ↓
+        </button>
+      </div>
+
+      {/* Cards grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+        {filtered.map(n => (
+          <NewsCard key={n.id} item={n} onOpen={() => setOpenItem(n)}
+            onApprove={() => setStatus(n.id, 'approved')}
+            onReject={() => setStatus(n.id, 'rejected')} />
+        ))}
+      </div>
+
+      {filtered.length === 0 && (
+        <div className="card" style={{ padding: 60, textAlign: 'center', color: 'var(--mute)' }}>
+          <div className="serif" style={{ fontSize: 24, color: 'var(--ink)', marginBottom: 6 }}>Пусто в этой вкладке</div>
+          <div style={{ fontSize: 13 }}>Новости появятся по мере обработки чанков активных стримов.</div>
+        </div>
+      )}
+
+      {/* Detail modal */}
+      <Modal open={!!openItem} onClose={() => setOpenItem(null)} width={780}>
+        {openItem && <NewsDetail item={openItem} onClose={() => setOpenItem(null)}
+          onApprove={() => { setStatus(openItem.id, 'approved'); setOpenItem(null); }}
+          onReject={() => { setStatus(openItem.id, 'rejected'); setOpenItem(null); }} />}
+      </Modal>
+    </div>
+  );
+}
+
+function NewsCard({ item, onOpen, onApprove, onReject }) {
+  const cat = CATEGORY_COLORS[item.category] || CATEGORY_COLORS.other;
+  return (
+    <article className="card" style={{
+      padding: 18, cursor: 'pointer', display: 'flex', flexDirection: 'column',
+      opacity: item.isDuplicate ? 0.65 : 1, position: 'relative',
+    }} onClick={onOpen}>
+      {/* Top meta */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <Chip color={cat} style={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10 }}>
+          {item.category}
+        </Chip>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--mute)' }}>{item.source}</span>
+        <span style={{ color: 'var(--mute-2)' }}>·</span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--mute)' }}>{item.time}</span>
+        <div style={{ flex: 1 }} />
+        <StatusChip status={item.status} />
+      </div>
+
+      {/* Headline */}
+      <h3 className="serif" style={{
+        fontSize: 22, lineHeight: 1.2, letterSpacing: '-0.015em',
+        margin: '0 0 10px', color: 'var(--ink)',
+      }}>
+        {item.headline}
+      </h3>
+
+      {/* Quote */}
+      <blockquote style={{
+        margin: '0 0 14px', padding: '8px 0 8px 14px',
+        borderLeft: '2px solid var(--acc)',
+        fontSize: 13.5, lineHeight: 1.55, color: 'var(--ink-2)',
+        fontStyle: 'italic',
+      }}>
+        «{item.quote}»
+      </blockquote>
+
+      {/* Tags */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+        {item.tags.map(tag => (
+          <span key={tag} className="mono" style={{
+            fontSize: 10.5, color: 'var(--mute)',
+          }}>#{tag}</span>
+        ))}
+      </div>
+
+      {/* Footer */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, marginTop: 'auto',
+        paddingTop: 12, borderTop: '1px solid var(--line)',
+      }}>
+        {/* Confidence bar */}
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: 'var(--mute)', marginBottom: 3 }}>
+            <span>confidence</span>
+            <span className="mono">{(item.confidence * 100).toFixed(0)}%</span>
+          </div>
+          <div style={{ height: 3, background: 'var(--panel)', borderRadius: 99, overflow: 'hidden' }}>
+            <div style={{
+              width: (item.confidence * 100) + '%', height: '100%',
+              background: item.confidence > 0.9 ? 'var(--ok)' : item.confidence > 0.8 ? 'var(--acc)' : 'var(--warn)',
+            }} />
+          </div>
+        </div>
+
+        {item.status === 'draft' && (
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 11, color: 'var(--bad)' }}
+              onClick={(e) => { e.stopPropagation(); onReject(); }}>
+              <Icon.x /> reject
+            </button>
+            <button className="btn btn-acc" style={{ padding: '4px 10px', fontSize: 11 }}
+              onClick={(e) => { e.stopPropagation(); onApprove(); }}>
+              <Icon.check /> approve
+            </button>
+          </div>
+        )}
+      </div>
+
+      {item.isDuplicate && (
+        <div style={{
+          position: 'absolute', top: 14, right: 14,
+          fontSize: 10, padding: '2px 8px', borderRadius: 99,
+          background: 'var(--warn-soft)', color: 'oklch(0.40 0.14 75)',
+          fontFamily: "'JetBrains Mono', monospace",
+        }}>
+          🔁 dup {(item.dupSim * 100).toFixed(0)}%
+        </div>
+      )}
+    </article>
+  );
+}
+
+function NewsDetail({ item, onClose, onApprove, onReject }) {
+  const cat = CATEGORY_COLORS[item.category] || CATEGORY_COLORS.other;
+  return (
+    <div>
+      <div style={{
+        padding: '18px 24px', display: 'flex', alignItems: 'center', gap: 10,
+        borderBottom: '1px solid var(--line)',
+      }}>
+        <Chip color={cat} style={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10 }}>
+          {item.category}
+        </Chip>
+        <span className="mono" style={{ fontSize: 11.5, color: 'var(--mute)' }}>
+          {item.source}{item.speaker ? ' · ' + item.speaker : ''} · {item.time}
+        </span>
+        <div style={{ flex: 1 }} />
+        <StatusChip status={item.status} />
+        <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={onClose}>
+          <Icon.x />
+        </button>
+      </div>
+
+      <div style={{ padding: '28px 32px', overflowY: 'auto' }}>
+        <h2 className="serif" style={{ fontSize: 34, lineHeight: 1.1, letterSpacing: '-0.02em', margin: '0 0 18px' }}>
+          {item.headline}
+        </h2>
+
+        {/* Image placeholder */}
+        <div className="placeholder-img" style={{ height: 200, borderRadius: 10, marginBottom: 18 }}>
+          концепт: {item.concept}
+        </div>
+
+        <blockquote className="serif" style={{
+          margin: '0 0 22px', padding: '0 0 0 20px',
+          borderLeft: '3px solid var(--acc)',
+          fontSize: 20, fontStyle: 'italic', lineHeight: 1.35, color: 'var(--ink)',
+        }}>
+          «{item.quote}»
+        </blockquote>
+
+        <div style={{
+          fontSize: 14, lineHeight: 1.7, color: 'var(--ink-2)', marginBottom: 24,
+        }}>
+          <p style={{ margin: '0 0 12px' }}>
+            Расширенный текст появится после обогащения через GPT-4o mini. Claude уже разметил утверждение по категории
+            <em> {item.category}</em>, достал ключевые теги и оценил достоверность в
+            <strong> {(item.confidence * 100).toFixed(0)}%</strong>.
+          </p>
+          <p style={{ margin: 0, color: 'var(--mute)' }}>
+            Чанк-источник: chunk #47 стрима «{item.source}», смещение 42мин 18сек от начала эфира.
+          </p>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16,
+          padding: '16px 0', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)',
+        }}>
+          <Meta label="Теги" value={<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {item.tags.map(tg => <span key={tg} className="mono" style={{ fontSize: 11, color: 'var(--mute)' }}>#{tg}</span>)}
+          </div>} />
+          <Meta label="Длительность" value={<span className="mono">{item.duration}</span>} />
+          <Meta label="Концепт" value={item.concept} />
+        </div>
+      </div>
+
+      {/* Action bar */}
+      <div style={{
+        padding: '14px 24px', display: 'flex', gap: 10,
+        borderTop: '1px solid var(--line)', background: 'var(--panel)',
+      }}>
+        <button className="btn btn-ghost" style={{ color: 'var(--mute)' }}>
+          <Icon.spark /> Обогатить
+        </button>
+        <div style={{ flex: 1 }} />
+        {item.status === 'draft' && (
+          <>
+            <button className="btn" style={{ color: 'var(--bad)' }} onClick={onReject}>
+              <Icon.x /> Отклонить
+            </button>
+            <button className="btn btn-acc" onClick={onApprove}>
+              <Icon.check /> Одобрить
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Meta({ label, value }) {
+  return (
+    <div>
+      <div className="label-xs" style={{ marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 13 }}>{value}</div>
+    </div>
+  );
+}
+
+Object.assign(window, { NewsTab });
+
+
+// === assistant.jsx ===
+// Tab: Assistant
+function AssistantTab({ t, lang }) {
+  const [messages, setMessages] = React.useState(ASSISTANT_MESSAGES_INIT);
+  const [input, setInput] = React.useState('');
+  const [thinking, setThinking] = React.useState(false);
+  const endRef = React.useRef(null);
+
+  React.useEffect(() => { endRef.current?.scrollIntoView?.({behavior:'smooth', block:'end'}); }, [messages, thinking]);
+
+  function send() {
+    if (!input.trim()) return;
+    const q = input.trim();
+    setMessages([...messages, { role: 'user', text: q }]);
+    setInput(''); setThinking(true);
+    setTimeout(() => {
+      setMessages(m => [...m, { role: 'assistant', text: 'Это мокнутый ответ. В проде здесь приходят стримовые дельты от провайдера (OpenAI / Claude / Ollama).' }]);
+      setThinking(false);
+    }, 900);
+  }
+
+  const suggestions = [
+    'покажи самые дорогие брифы за неделю',
+    'почему dedup не срабатывает на похожих новостях?',
+    'как включить fastembed вместо openai?',
+    'сколько GPU-памяти занимает distil-large-v3?',
+  ];
+
+  return (
+    <div className="fade-in" style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 28 }}>
+      {/* Sidebar: sessions */}
+      <aside>
+        <div className="label-xs" style={{ marginBottom: 12 }}>Сессии</div>
+        <button className="btn" style={{ width: '100%', justifyContent: 'flex-start', marginBottom: 12 }}>
+          <Icon.plus /> Новый чат
+        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {[
+            { title: 'Почему завис чанк 47', active: true, date: 'сегодня' },
+            { title: 'Как обновить промпт', active: false, date: 'вчера' },
+            { title: 'Разбор ошибок Supadata', active: false, date: '15 апр' },
+            { title: 'Тюнинг whisper-модели', active: false, date: '12 апр' },
+          ].map((s, i) => (
+            <button key={i} style={{
+              textAlign: 'left', padding: '8px 12px', borderRadius: 8, fontSize: 13,
+              background: s.active ? 'var(--panel)' : 'transparent',
+              color: s.active ? 'var(--ink)' : 'var(--mute)',
+            }}>
+              <div style={{ fontWeight: s.active ? 500 : 400,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{s.title}</div>
+              <div className="mono" style={{ fontSize: 10.5, color: 'var(--mute-2)', marginTop: 1 }}>{s.date}</div>
+            </button>
+          ))}
+        </div>
+      </aside>
+
+      {/* Chat */}
+      <div>
+        <EditorialHeader
+          eyebrow="AI-ассистент"
+          title="Задай вопрос —"
+          accent="или попроси сделать."
+          sub={lang === 'ru'
+            ? 'Знает про пайплайн, БД, интеграции, коды ошибок. Может менять настройки и запускать задачи (с твоим подтверждением).'
+            : 'Knows the pipeline, DB, integrations, error codes. Can change settings and trigger tasks (with your confirmation).'}
+        />
+
+        <div className="card" style={{ padding: 0, minHeight: 480, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, padding: '20px 24px', overflowY: 'auto', maxHeight: 520 }} className="scroll-thin">
+            {messages.map((m, i) => (
+              <div key={i} style={{ marginBottom: 20, display: 'flex', gap: 12 }}>
+                <div style={{
+                  width: 26, height: 26, borderRadius: 999, flexShrink: 0,
+                  background: m.role === 'user' ? 'var(--ink)' : 'var(--acc-soft)',
+                  color: m.role === 'user' ? '#fff' : 'var(--acc-ink)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, fontWeight: 600, marginTop: 2,
+                }}>
+                  {m.role === 'user' ? 'AF' : <span className="serif" style={{ fontSize: 15, fontStyle: 'italic' }}>a</span>}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="label-xs" style={{ marginBottom: 4 }}>
+                    {m.role === 'user' ? 'Ты' : 'Ассистент'}
+                  </div>
+                  <div style={{ fontSize: 14, lineHeight: 1.65, color: 'var(--ink-2)', whiteSpace: 'pre-wrap' }}>
+                    {m.text.split('`').map((p, idx) =>
+                      idx % 2 === 1
+                        ? <code key={idx} className="mono" style={{
+                            background: 'var(--panel)', padding: '1px 5px', borderRadius: 4, fontSize: 12.5,
+                          }}>{p}</code>
+                        : <React.Fragment key={idx}>{p}</React.Fragment>
+                    )}
+                  </div>
+                  {m.hasAction && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      <button className="btn btn-primary" style={{ fontSize: 12 }}>
+                        <Icon.check /> Да, переключи
+                      </button>
+                      <button className="btn" style={{ fontSize: 12 }}>Нет, я сам</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {thinking && (
+              <div style={{ display: 'flex', gap: 12, color: 'var(--mute)', fontSize: 13 }}>
+                <div style={{ width: 26, height: 26 }} />
+                <div className="fade-in">
+                  думаю<span style={{ animation: 'blink 1s infinite' }}>…</span>
+                </div>
+              </div>
+            )}
+            <div ref={endRef} />
+          </div>
+
+          {/* Input */}
+          <div style={{ borderTop: '1px solid var(--line)', padding: 16 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+              {suggestions.map((s, i) => (
+                <button key={i} className="chip" style={{ cursor: 'pointer' }}
+                  onClick={() => setInput(s)}>
+                  {s}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'stretch' }}>
+              <textarea
+                className="text-input"
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+                placeholder={t.askPlaceholder}
+                style={{ resize: 'none', flex: 1, minHeight: 44 }}
+              />
+              <button className="btn btn-primary" disabled={!input.trim()} onClick={send}>
+                <Icon.arrow />
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--mute-2)', marginTop: 8 }}>
+              <span><span className="kbd">⏎</span> отправить</span>
+              <span><span className="kbd">⇧⏎</span> новая строка</span>
+              <div style={{ flex: 1 }} />
+              <span>провайдер <span className="mono" style={{ color: 'var(--mute)' }}>claude-sonnet-4.6</span></span>
+              <span>кэш <span style={{ color: 'var(--ok)' }}>on</span></span>
+            </div>
+          </div>
+        </div>
+
+        <style>{`@keyframes blink { 50% { opacity: 0.3 } }`}</style>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { AssistantTab });
+
+
+// === settings.jsx ===
+// Tab: Settings
+function SettingsTab({ t, lang }) {
+  const [activeSection, setActiveSection] = React.useState('integrations');
+  const [keys, setKeys] = React.useState(
+    INTEGRATIONS.reduce((acc, i) => ({ ...acc, [i.id]: i.configured }), {})
+  );
+
+  const sections = [
+    ['integrations', 'Интеграции', INTEGRATIONS.length],
+    ['storage', 'Хранилище', null],
+    ['assistant', 'Ассистент', null],
+    ['enrich', 'Обогащение', null],
+    ['advanced', 'Продвинутые', null],
+  ];
+
+  return (
+    <div className="fade-in">
+      <EditorialHeader
+        eyebrow="Настройки"
+        title="Интеграции и"
+        accent="режимы работы."
+        sub={lang === 'ru'
+          ? 'Ключи API, локальные движки, политика хранения, настройки ассистента и пайплайна обогащения.'
+          : 'API keys, local engines, retention policy, assistant and enrichment pipeline.'}
+      />
+
+      <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 36 }}>
+        {/* Nav */}
+        <aside>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {sections.map(([id, lbl, ct]) => (
+              <button key={id} onClick={() => setActiveSection(id)}
+                style={{
+                  textAlign: 'left', padding: '9px 14px', borderRadius: 8,
+                  fontSize: 13.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  background: activeSection === id ? 'var(--panel)' : 'transparent',
+                  color: activeSection === id ? 'var(--ink)' : 'var(--mute)',
+                  fontWeight: activeSection === id ? 500 : 400,
+                }}>
+                <span>{lbl}</span>
+                {ct && <span className="mono" style={{ fontSize: 10.5, color: 'var(--mute-2)' }}>{ct}</span>}
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        {/* Content */}
+        <div>
+          {activeSection === 'integrations' && <IntegrationsSection keys={keys} setKeys={setKeys} lang={lang} />}
+          {activeSection === 'storage' && <StorageSection />}
+          {activeSection === 'assistant' && <AssistantSection />}
+          {activeSection === 'enrich' && <EnrichSection />}
+          {activeSection === 'advanced' && <AdvancedSection />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IntegrationsSection({ keys, setKeys, lang }) {
+  return (
+    <div>
+      <div style={{ display: 'grid', gap: 12 }}>
+        {INTEGRATIONS.map(i => (
+          <div key={i.id} className="card" style={{ padding: 18, display: 'grid',
+            gridTemplateColumns: 'auto 1fr auto auto', gap: 18, alignItems: 'center',
+          }}>
+            <div style={{
+              width: 38, height: 38, borderRadius: 10,
+              background: i.kind === 'cloud' ? 'var(--acc-soft)' : 'var(--panel)',
+              color: i.kind === 'cloud' ? 'var(--acc-ink)' : 'var(--ink)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: "'Instrument Serif', serif", fontSize: 20,
+            }}>
+              {i.name[0]}
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2 }}>
+                <span style={{ fontSize: 14.5, fontWeight: 500 }}>{i.name}</span>
+                <Chip style={{ fontSize: 10 }}>{i.kind}</Chip>
+                {keys[i.id] && <StatusChip status="approved" />}
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--mute)' }}>
+                {lang === 'ru' ? i.desc : i.descEn}
+                {i.masked && <span className="mono" style={{ marginLeft: 10, color: 'var(--mute-2)' }}>{i.masked}</span>}
+              </div>
+            </div>
+            <a href={'https://' + i.website} target="_blank" className="btn btn-ghost"
+              style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--mute)' }}>
+              {i.website} <Icon.ext />
+            </a>
+            <div className="toggle" onClick={() => setKeys({ ...keys, [i.id]: !keys[i.id] })}
+              {...(keys[i.id] ? { className: 'toggle on' } : {})}
+              style={{ cursor: 'pointer' }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StorageSection() {
+  const stats = [
+    { label: 'Размер БД', value: '124 MB', sub: 'videotext.db' },
+    { label: 'Медиа-чанки', value: '3.2 GB', sub: '1 420 файлов' },
+    { label: 'Изображения', value: '184 MB', sub: '246 файлов' },
+    { label: 'Старейшая запись', value: '12 дн', sub: 'NewsItem #47' },
+  ];
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 28 }}>
+        {stats.map((s, i) => (
+          <div key={i} className="card" style={{ padding: 16 }}>
+            <div className="label-xs" style={{ marginBottom: 6 }}>{s.label}</div>
+            <div className="serif" style={{ fontSize: 28, letterSpacing: '-0.02em' }}>{s.value}</div>
+            <div className="mono" style={{ fontSize: 10.5, color: 'var(--mute-2)', marginTop: 2 }}>{s.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <Section label="Политика хранения">
+        <div className="card" style={{ padding: 20 }}>
+          {[
+            ['Видео + транскрипты', 365, 3650],
+            ['Чанки live-стримов (MP3)', 7, 60],
+            ['Транскрипты чанков', 30, 365],
+            ['Новости (одобренные)', 180, 3650],
+            ['Новости (draft/rejected)', 14, 365],
+          ].map(([label, val, max], i) => (
+            <div key={i} style={{
+              display: 'grid', gridTemplateColumns: '240px 1fr 80px', gap: 16, alignItems: 'center',
+              padding: '14px 0', borderTop: i === 0 ? 'none' : '1px solid var(--line)',
+            }}>
+              <div style={{ fontSize: 13.5 }}>{label}</div>
+              <input type="range" min={0} max={max} defaultValue={val} style={{ width: '100%' }} />
+              <div className="mono" style={{ fontSize: 12, textAlign: 'right' }}>
+                <span style={{ color: 'var(--ink)' }}>{val}</span>
+                <span style={{ color: 'var(--mute-2)' }}> дн</span>
+              </div>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 10, marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+            <button className="btn">Dry run</button>
+            <button className="btn btn-primary">Применить</button>
+            <div style={{ flex: 1 }} />
+            <span style={{ fontSize: 12, color: 'var(--mute)' }}>будет удалено ~412 МБ</span>
+          </div>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function AssistantSection() {
+  return (
+    <div className="card" style={{ padding: 24 }}>
+      <Field label="Провайдер">
+        <div style={{ display: 'flex', gap: 4, background: 'var(--panel)', padding: 3, borderRadius: 8, width: 'fit-content' }}>
+          {['openai', 'anthropic', 'ollama'].map((p, i) => (
+            <button key={p} style={{
+              padding: '6px 14px', fontSize: 13, borderRadius: 6,
+              background: i === 1 ? 'var(--surface)' : 'transparent',
+              color: i === 1 ? 'var(--ink)' : 'var(--mute)',
+              fontWeight: i === 1 ? 500 : 400,
+            }}>{p}</button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Модель">
+        <input className="text-input mono" defaultValue="claude-sonnet-4-6" style={{ maxWidth: 360 }}/>
+      </Field>
+      <Field label="Кэш Q&A" sub="Сохранять ответы и возвращать их, если следующий вопрос семантически близок.">
+        <div className="toggle on" style={{ cursor: 'pointer' }} />
+      </Field>
+      <Field label="Порог схожести для кэша">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, maxWidth: 360 }}>
+          <input type="range" min="0.5" max="1" step="0.01" defaultValue="0.85" style={{ flex: 1 }} />
+          <span className="mono" style={{ fontSize: 13 }}>0.85</span>
+        </div>
+      </Field>
+      <Field label="Автоподтверждение действий" sub="Разрешить ассистенту менять настройки без отдельного клика.">
+        <div className="toggle" style={{ cursor: 'pointer' }} />
+      </Field>
+    </div>
+  );
+}
+
+function EnrichSection() {
+  return (
+    <div className="card" style={{ padding: 24 }}>
+      <Field label="Модель для расширенного текста">
+        <SelectMini value="gpt-4o-mini" onChange={()=>{}}
+          options={[['gpt-4o-mini','gpt-4o-mini'], ['gpt-4o','gpt-4o'], ['claude-haiku','claude-haiku-4.5']]} />
+      </Field>
+      <Field label="Источник изображений">
+        <div style={{ display: 'flex', gap: 6 }}>
+          {['hybrid', 'dall-e-3', 'pexels', 'none'].map((v, i) => (
+            <button key={v} style={{
+              padding: '6px 12px', borderRadius: 8, fontSize: 12.5,
+              background: i === 0 ? 'var(--ink)' : 'var(--surface)',
+              color: i === 0 ? '#fff' : 'var(--mute)',
+              border: '1px solid ' + (i === 0 ? 'var(--ink)' : 'var(--line)'),
+            }}>{v}</button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Дедуп-порог изображений">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, maxWidth: 360 }}>
+          <input type="range" min="0.5" max="1" step="0.01" defaultValue="0.88" style={{ flex: 1 }} />
+          <span className="mono" style={{ fontSize: 13 }}>0.88</span>
+        </div>
+      </Field>
+      <Field label="Embeddings провайдер">
+        <SelectMini value="fastembed" onChange={()=>{}}
+          options={[['fastembed','fastembed (local)'], ['openai','text-embedding-3-small'], ['ollama','nomic-embed-text']]} />
+      </Field>
+    </div>
+  );
+}
+
+function AdvancedSection() {
+  return (
+    <div className="card" style={{ padding: 24 }}>
+      <Field label="Webhook-токен" sub="Требовать X-Webhook-Token на POST /briefs.">
+        <input className="text-input mono" placeholder="необязательно" style={{ maxWidth: 360 }}/>
+      </Field>
+      <Field label="OUTPUT_DIR">
+        <input className="text-input mono" defaultValue="./output" style={{ maxWidth: 360 }}/>
+      </Field>
+      <Field label="Cookies.txt" sub="Для yt-dlp при приватных/залогиненных каналах.">
+        <button className="btn">Загрузить файл</button>
+      </Field>
+      <Field label="Debug-логи">
+        <div className="toggle" style={{ cursor: 'pointer' }} />
+      </Field>
+    </div>
+  );
+}
+
+function Field({ label, sub, children }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 24,
+      padding: '16px 0', borderTop: '1px solid var(--line)',
+      borderTopColor: 'var(--line)' }}>
+      <div>
+        <div style={{ fontSize: 13.5, fontWeight: 500 }}>{label}</div>
+        {sub && <div style={{ fontSize: 12, color: 'var(--mute)', marginTop: 2 }}>{sub}</div>}
+      </div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+Object.assign(window, { SettingsTab });
+
+
+// === app.jsx ===
+// App shell
+function App() {
+  const [tab, setTab] = React.useState(() => localStorage.getItem('vt_tab') || 'video');
+  const [lang, setLang] = React.useState(() => localStorage.getItem('vt_lang') || 'ru');
+  const t = I18N[lang];
+
+  React.useEffect(() => localStorage.setItem('vt_tab', tab), [tab]);
+  React.useEffect(() => localStorage.setItem('vt_lang', lang), [lang]);
+
+  return (
+    <div>
+      <TopBar active={tab} onTab={setTab} lang={lang} onLang={setLang} t={t} />
+      <main style={{ maxWidth: 1280, margin: '0 auto', padding: '40px 32px 80px' }}>
+        {tab === 'video'     && <VideoTab t={t} lang={lang} />}
+        {tab === 'streams'   && <StreamsTab t={t} lang={lang} />}
+        {tab === 'news'      && <NewsTab t={t} lang={lang} />}
+        {tab === 'assistant' && <AssistantTab t={t} lang={lang} />}
+        {tab === 'settings'  && <SettingsTab t={t} lang={lang} />}
+      </main>
+      <footer style={{
+        maxWidth: 1280, margin: '0 auto', padding: '20px 32px 40px',
+        borderTop: '1px solid var(--line)',
+        display: 'flex', alignItems: 'center', gap: 16, fontSize: 11.5, color: 'var(--mute-2)',
+      }}>
+        <span className="serif" style={{ fontSize: 16, color: 'var(--ink)' }}>VideoText</span>
+        <span>локальный инструмент · SQLite + Prisma · работает на твоей машине</span>
+        <div style={{ flex: 1 }} />
+        <a href="#" style={{ color: 'var(--mute)' }}>Swagger /docs ↗</a>
+        <span className="mono">v0.4.0</span>
+      </footer>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+
+</script>
+</body>
+</html>
+ + totalCost.toFixed(2)} divider />
+        <Stat label="GPU usage" value="74%" divider sub="RTX 2060 · 6GB" />
+      </div>
+
+      {/* New stream trigger */}
+      <Section label={t.activeStreams + ' · ' + streams.length} right={
+        <button className="btn btn-primary" style={{ fontSize: 12.5, padding: '7px 14px' }}
+          onClick={() => setShowForm(!showForm)}>
+          <Icon.plus />{showForm ? t.close : t.newStream}
+        </button>
+      }>
+        {showForm && (
+          <div className="card fade-in" style={{ padding: 20, marginBottom: 18, background: 'var(--panel)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+              <div>
+                <div className="label-xs" style={{ marginBottom: 6 }}>URL live-эфира</div>
+                <input className="text-input mono" placeholder="https://youtube.com/watch?v=…"
+                  value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
+              </div>
+              <div>
+                <div className="label-xs" style={{ marginBottom: 6 }}>Название канала</div>
+                <input className="text-input" placeholder="Bloomberg Live"
+                  value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })} />
+              </div>
+              <div>
+                <div className="label-xs" style={{ marginBottom: 6 }}>Ведущий</div>
+                <input className="text-input" placeholder="опционально"
+                  value={form.speaker} onChange={(e) => setForm({ ...form, speaker: e.target.value })} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: 10 }}>
+                <div>
+                  <div className="label-xs" style={{ marginBottom: 6 }}>Интервал</div>
+                  <input className="text-input mono" type="number" min="1" max="30"
+                    value={form.intervalMin} onChange={(e) => setForm({ ...form, intervalMin: +e.target.value })} />
+                </div>
+                <div>
+                  <div className="label-xs" style={{ marginBottom: 6 }}>Whisper</div>
+                  <select className="text-input" value={form.whisper}
+                    onChange={(e) => setForm({ ...form, whisper: e.target.value })}>
+                    <option>tiny</option><option>small</option><option>medium</option>
+                    <option>large-v3</option><option>distil-large-v3</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 12.5,
+              paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.makeSummary}
+                  onChange={(e) => setForm({ ...form, makeSummary: e.target.checked })} />
+                Сводный бриф на весь стрим
+              </label>
+              {form.makeSummary && (
+                <>
+                  <SelectMini value={form.template} onChange={(v) => setForm({ ...form, template: v })}
+                    options={[['news','news'], ['full','full + ТЗ']]} />
+                  <CheckMini checked={form.autoBrief} onChange={(v) => setForm({ ...form, autoBrief: v })}>
+                    авто на стопе
+                  </CheckMini>
+                </>
+              )}
+              <div style={{ flex: 1 }} />
+              <button className="btn" onClick={() => setShowForm(false)}>Отмена</button>
+              <button className="btn btn-primary" onClick={addStream} disabled={!form.url || !form.channel}>
+                <Icon.play /> Запустить
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {streams.map((s) => <StreamRow key={s.id} s={s} t={t} lang={lang} onStatus={toggleStatus} />)}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function Stat({ label, value, total, sub, divider }) {
+  return (
+    <div style={{
+      padding: '18px 22px',
+      borderLeft: divider ? '1px solid var(--line)' : 'none',
+    }}>
+      <div className="label-xs">{label}</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+        <span className="serif" style={{ fontSize: 32, letterSpacing: '-0.02em' }}>{value}</span>
+        {total !== undefined && <span className="mono" style={{ fontSize: 12, color: 'var(--mute-2)' }}>/ {total}</span>}
+      </div>
+      {sub && <div className="mono" style={{ fontSize: 10.5, color: 'var(--mute-2)', marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function StreamRow({ s, t, lang, onStatus }) {
+  return (
+    <div className="card" style={{ padding: 18, display: 'grid',
+      gridTemplateColumns: '1fr 140px 200px auto', gap: 20, alignItems: 'center',
+    }}>
+      {/* Channel info */}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          {s.status === 'active' && s.running && <span className="live-dot" />}
+          <span className="serif" style={{ fontSize: 20, letterSpacing: '-0.01em' }}>{s.channel}</span>
+          <StatusChip status={s.status} />
+          {s.speaker && (
+            <span style={{ color: 'var(--mute)', fontSize: 12 }}>
+              · {s.speaker}
+            </span>
+          )}
+        </div>
+        <div className="mono" style={{ fontSize: 11, color: 'var(--mute-2)',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 6 }}>
+          {s.url}
+        </div>
+        <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--mute)' }}>
+          <span><span className="mono" style={{ color: 'var(--ink)' }}>{s.intervalMin}</span>мин чанки</span>
+          <span>whisper <span className="mono" style={{ color: 'var(--ink)' }}>{s.whisper}</span></span>
+          <span>аптайм <span className="mono" style={{ color: 'var(--ink)' }}>{lang === 'ru' ? s.uptime : s.uptimeEn}</span></span>
+        </div>
+      </div>
+
+      {/* Sparkline */}
+      <div>
+        <div className="label-xs" style={{ marginBottom: 4 }}>Темп новостей</div>
+        <Sparkline data={s.spark} />
+      </div>
+
+      {/* Counters */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div>
+          <div className="label-xs">Чанков</div>
+          <div className="serif" style={{ fontSize: 22 }}>{s.chunksTotal}</div>
+        </div>
+        <div>
+          <div className="label-xs">Новостей</div>
+          <div className="serif" style={{ fontSize: 22 }}>{s.itemsCount}</div>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 6 }}>
+        {s.status === 'active' ? (
+          <button className="btn" style={{ padding: '6px 10px' }} onClick={() => onStatus(s.id, 'paused')}>
+            <Icon.pause />
+          </button>
+        ) : s.status === 'paused' ? (
+          <button className="btn btn-primary" style={{ padding: '6px 10px' }} onClick={() => onStatus(s.id, 'active')}>
+            <Icon.play />
+          </button>
+        ) : (
+          <button className="btn" style={{ padding: '6px 10px' }} onClick={() => onStatus(s.id, 'active')}>
+            <Icon.play />
+          </button>
+        )}
+        <button className="btn" style={{ padding: '6px 10px' }} onClick={() => onStatus(s.id, 'stopped')}>
+          <Icon.stop />
+        </button>
+        <button className="btn btn-ghost" style={{ padding: '6px 10px', color: 'var(--mute)', fontSize: 12 }}>
+          ред.
+        </button>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { StreamsTab });
+
+
+// === news.jsx ===
+// Tab: News
+function NewsTab({ t, lang }) {
+  const [news, setNews] = React.useState(SAMPLE_NEWS);
+  const [filter, setFilter] = React.useState('draft');
+  const [openItem, setOpenItem] = React.useState(null);
+  const [hideDupes, setHideDupes] = React.useState(false);
+
+  const filtered = news.filter(n => {
+    if (filter !== 'all' && n.status !== filter) return false;
+    if (hideDupes && n.isDuplicate) return false;
+    return true;
+  });
+
+  function setStatus(id, status) {
+    setNews(news.map(n => n.id === id ? { ...n, status } : n));
+  }
+
+  const counts = {
+    all: news.length,
+    draft: news.filter(n => n.status === 'draft').length,
+    approved: news.filter(n => n.status === 'approved').length,
+    rejected: news.filter(n => n.status === 'rejected').length,
+  };
+
+  return (
+    <div className="fade-in">
+      <EditorialHeader
+        eyebrow="Лента новостей"
+        title="Сегодня —"
+        accent={counts.draft + ' на столе редактора.'}
+        sub={lang === 'ru'
+          ? 'Каждая новость вытащена из live-эфира, разобрана на headline + quote + категорию. Одобри, отклони или перенастрой.'
+          : 'Every story was pulled live, split into headline + quote + category. Approve, reject, or tune.'}
+      />
+
+      {/* Filter tabs */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 18, flexWrap: 'wrap' }}>
+        {[
+          ['draft', 'Модерация'],
+          ['approved', 'Одобрено'],
+          ['rejected', 'Отклонено'],
+          ['all', 'Всё'],
+        ].map(([id, lbl]) => (
+          <button key={id} onClick={() => setFilter(id)}
+            style={{
+              padding: '6px 12px', borderRadius: 8, fontSize: 13,
+              background: filter === id ? 'var(--ink)' : 'var(--surface)',
+              color: filter === id ? '#fff' : 'var(--mute)',
+              border: '1px solid ' + (filter === id ? 'var(--ink)' : 'var(--line)'),
+              fontWeight: 500,
+            }}>
+            {lbl}
+            <span className="mono" style={{
+              marginLeft: 8, fontSize: 10.5,
+              color: filter === id ? 'rgba(255,255,255,0.6)' : 'var(--mute-2)',
+            }}>{counts[id]}</span>
+          </button>
+        ))}
+        <div style={{ flex: 1 }} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--mute)' }}>
+          <input type="checkbox" checked={hideDupes} onChange={(e) => setHideDupes(e.target.checked)} />
+          Скрыть дубликаты
+        </label>
+        <button className="btn" style={{ padding: '6px 12px', fontSize: 12 }}>
+          Экспорт ↓
+        </button>
+      </div>
+
+      {/* Cards grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+        {filtered.map(n => (
+          <NewsCard key={n.id} item={n} onOpen={() => setOpenItem(n)}
+            onApprove={() => setStatus(n.id, 'approved')}
+            onReject={() => setStatus(n.id, 'rejected')} />
+        ))}
+      </div>
+
+      {filtered.length === 0 && (
+        <div className="card" style={{ padding: 60, textAlign: 'center', color: 'var(--mute)' }}>
+          <div className="serif" style={{ fontSize: 24, color: 'var(--ink)', marginBottom: 6 }}>Пусто в этой вкладке</div>
+          <div style={{ fontSize: 13 }}>Новости появятся по мере обработки чанков активных стримов.</div>
+        </div>
+      )}
+
+      {/* Detail modal */}
+      <Modal open={!!openItem} onClose={() => setOpenItem(null)} width={780}>
+        {openItem && <NewsDetail item={openItem} onClose={() => setOpenItem(null)}
+          onApprove={() => { setStatus(openItem.id, 'approved'); setOpenItem(null); }}
+          onReject={() => { setStatus(openItem.id, 'rejected'); setOpenItem(null); }} />}
+      </Modal>
+    </div>
+  );
+}
+
+function NewsCard({ item, onOpen, onApprove, onReject }) {
+  const cat = CATEGORY_COLORS[item.category] || CATEGORY_COLORS.other;
+  return (
+    <article className="card" style={{
+      padding: 18, cursor: 'pointer', display: 'flex', flexDirection: 'column',
+      opacity: item.isDuplicate ? 0.65 : 1, position: 'relative',
+    }} onClick={onOpen}>
+      {/* Top meta */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <Chip color={cat} style={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10 }}>
+          {item.category}
+        </Chip>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--mute)' }}>{item.source}</span>
+        <span style={{ color: 'var(--mute-2)' }}>·</span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--mute)' }}>{item.time}</span>
+        <div style={{ flex: 1 }} />
+        <StatusChip status={item.status} />
+      </div>
+
+      {/* Headline */}
+      <h3 className="serif" style={{
+        fontSize: 22, lineHeight: 1.2, letterSpacing: '-0.015em',
+        margin: '0 0 10px', color: 'var(--ink)',
+      }}>
+        {item.headline}
+      </h3>
+
+      {/* Quote */}
+      <blockquote style={{
+        margin: '0 0 14px', padding: '8px 0 8px 14px',
+        borderLeft: '2px solid var(--acc)',
+        fontSize: 13.5, lineHeight: 1.55, color: 'var(--ink-2)',
+        fontStyle: 'italic',
+      }}>
+        «{item.quote}»
+      </blockquote>
+
+      {/* Tags */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+        {item.tags.map(tag => (
+          <span key={tag} className="mono" style={{
+            fontSize: 10.5, color: 'var(--mute)',
+          }}>#{tag}</span>
+        ))}
+      </div>
+
+      {/* Footer */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, marginTop: 'auto',
+        paddingTop: 12, borderTop: '1px solid var(--line)',
+      }}>
+        {/* Confidence bar */}
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: 'var(--mute)', marginBottom: 3 }}>
+            <span>confidence</span>
+            <span className="mono">{(item.confidence * 100).toFixed(0)}%</span>
+          </div>
+          <div style={{ height: 3, background: 'var(--panel)', borderRadius: 99, overflow: 'hidden' }}>
+            <div style={{
+              width: (item.confidence * 100) + '%', height: '100%',
+              background: item.confidence > 0.9 ? 'var(--ok)' : item.confidence > 0.8 ? 'var(--acc)' : 'var(--warn)',
+            }} />
+          </div>
+        </div>
+
+        {item.status === 'draft' && (
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 11, color: 'var(--bad)' }}
+              onClick={(e) => { e.stopPropagation(); onReject(); }}>
+              <Icon.x /> reject
+            </button>
+            <button className="btn btn-acc" style={{ padding: '4px 10px', fontSize: 11 }}
+              onClick={(e) => { e.stopPropagation(); onApprove(); }}>
+              <Icon.check /> approve
+            </button>
+          </div>
+        )}
+      </div>
+
+      {item.isDuplicate && (
+        <div style={{
+          position: 'absolute', top: 14, right: 14,
+          fontSize: 10, padding: '2px 8px', borderRadius: 99,
+          background: 'var(--warn-soft)', color: 'oklch(0.40 0.14 75)',
+          fontFamily: "'JetBrains Mono', monospace",
+        }}>
+          🔁 dup {(item.dupSim * 100).toFixed(0)}%
+        </div>
+      )}
+    </article>
+  );
+}
+
+function NewsDetail({ item, onClose, onApprove, onReject }) {
+  const cat = CATEGORY_COLORS[item.category] || CATEGORY_COLORS.other;
+  return (
+    <div>
+      <div style={{
+        padding: '18px 24px', display: 'flex', alignItems: 'center', gap: 10,
+        borderBottom: '1px solid var(--line)',
+      }}>
+        <Chip color={cat} style={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10 }}>
+          {item.category}
+        </Chip>
+        <span className="mono" style={{ fontSize: 11.5, color: 'var(--mute)' }}>
+          {item.source}{item.speaker ? ' · ' + item.speaker : ''} · {item.time}
+        </span>
+        <div style={{ flex: 1 }} />
+        <StatusChip status={item.status} />
+        <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={onClose}>
+          <Icon.x />
+        </button>
+      </div>
+
+      <div style={{ padding: '28px 32px', overflowY: 'auto' }}>
+        <h2 className="serif" style={{ fontSize: 34, lineHeight: 1.1, letterSpacing: '-0.02em', margin: '0 0 18px' }}>
+          {item.headline}
+        </h2>
+
+        {/* Image placeholder */}
+        <div className="placeholder-img" style={{ height: 200, borderRadius: 10, marginBottom: 18 }}>
+          концепт: {item.concept}
+        </div>
+
+        <blockquote className="serif" style={{
+          margin: '0 0 22px', padding: '0 0 0 20px',
+          borderLeft: '3px solid var(--acc)',
+          fontSize: 20, fontStyle: 'italic', lineHeight: 1.35, color: 'var(--ink)',
+        }}>
+          «{item.quote}»
+        </blockquote>
+
+        <div style={{
+          fontSize: 14, lineHeight: 1.7, color: 'var(--ink-2)', marginBottom: 24,
+        }}>
+          <p style={{ margin: '0 0 12px' }}>
+            Расширенный текст появится после обогащения через GPT-4o mini. Claude уже разметил утверждение по категории
+            <em> {item.category}</em>, достал ключевые теги и оценил достоверность в
+            <strong> {(item.confidence * 100).toFixed(0)}%</strong>.
+          </p>
+          <p style={{ margin: 0, color: 'var(--mute)' }}>
+            Чанк-источник: chunk #47 стрима «{item.source}», смещение 42мин 18сек от начала эфира.
+          </p>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16,
+          padding: '16px 0', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)',
+        }}>
+          <Meta label="Теги" value={<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {item.tags.map(tg => <span key={tg} className="mono" style={{ fontSize: 11, color: 'var(--mute)' }}>#{tg}</span>)}
+          </div>} />
+          <Meta label="Длительность" value={<span className="mono">{item.duration}</span>} />
+          <Meta label="Концепт" value={item.concept} />
+        </div>
+      </div>
+
+      {/* Action bar */}
+      <div style={{
+        padding: '14px 24px', display: 'flex', gap: 10,
+        borderTop: '1px solid var(--line)', background: 'var(--panel)',
+      }}>
+        <button className="btn btn-ghost" style={{ color: 'var(--mute)' }}>
+          <Icon.spark /> Обогатить
+        </button>
+        <div style={{ flex: 1 }} />
+        {item.status === 'draft' && (
+          <>
+            <button className="btn" style={{ color: 'var(--bad)' }} onClick={onReject}>
+              <Icon.x /> Отклонить
+            </button>
+            <button className="btn btn-acc" onClick={onApprove}>
+              <Icon.check /> Одобрить
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Meta({ label, value }) {
+  return (
+    <div>
+      <div className="label-xs" style={{ marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 13 }}>{value}</div>
+    </div>
+  );
+}
+
+Object.assign(window, { NewsTab });
+
+
+// === assistant.jsx ===
+// Tab: Assistant
+function AssistantTab({ t, lang }) {
+  const [messages, setMessages] = React.useState(ASSISTANT_MESSAGES_INIT);
+  const [input, setInput] = React.useState('');
+  const [thinking, setThinking] = React.useState(false);
+  const endRef = React.useRef(null);
+
+  React.useEffect(() => { endRef.current?.scrollIntoView?.({behavior:'smooth', block:'end'}); }, [messages, thinking]);
+
+  function send() {
+    if (!input.trim()) return;
+    const q = input.trim();
+    setMessages([...messages, { role: 'user', text: q }]);
+    setInput(''); setThinking(true);
+    setTimeout(() => {
+      setMessages(m => [...m, { role: 'assistant', text: 'Это мокнутый ответ. В проде здесь приходят стримовые дельты от провайдера (OpenAI / Claude / Ollama).' }]);
+      setThinking(false);
+    }, 900);
+  }
+
+  const suggestions = [
+    'покажи самые дорогие брифы за неделю',
+    'почему dedup не срабатывает на похожих новостях?',
+    'как включить fastembed вместо openai?',
+    'сколько GPU-памяти занимает distil-large-v3?',
+  ];
+
+  return (
+    <div className="fade-in" style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 28 }}>
+      {/* Sidebar: sessions */}
+      <aside>
+        <div className="label-xs" style={{ marginBottom: 12 }}>Сессии</div>
+        <button className="btn" style={{ width: '100%', justifyContent: 'flex-start', marginBottom: 12 }}>
+          <Icon.plus /> Новый чат
+        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {[
+            { title: 'Почему завис чанк 47', active: true, date: 'сегодня' },
+            { title: 'Как обновить промпт', active: false, date: 'вчера' },
+            { title: 'Разбор ошибок Supadata', active: false, date: '15 апр' },
+            { title: 'Тюнинг whisper-модели', active: false, date: '12 апр' },
+          ].map((s, i) => (
+            <button key={i} style={{
+              textAlign: 'left', padding: '8px 12px', borderRadius: 8, fontSize: 13,
+              background: s.active ? 'var(--panel)' : 'transparent',
+              color: s.active ? 'var(--ink)' : 'var(--mute)',
+            }}>
+              <div style={{ fontWeight: s.active ? 500 : 400,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{s.title}</div>
+              <div className="mono" style={{ fontSize: 10.5, color: 'var(--mute-2)', marginTop: 1 }}>{s.date}</div>
+            </button>
+          ))}
+        </div>
+      </aside>
+
+      {/* Chat */}
+      <div>
+        <EditorialHeader
+          eyebrow="AI-ассистент"
+          title="Задай вопрос —"
+          accent="или попроси сделать."
+          sub={lang === 'ru'
+            ? 'Знает про пайплайн, БД, интеграции, коды ошибок. Может менять настройки и запускать задачи (с твоим подтверждением).'
+            : 'Knows the pipeline, DB, integrations, error codes. Can change settings and trigger tasks (with your confirmation).'}
+        />
+
+        <div className="card" style={{ padding: 0, minHeight: 480, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, padding: '20px 24px', overflowY: 'auto', maxHeight: 520 }} className="scroll-thin">
+            {messages.map((m, i) => (
+              <div key={i} style={{ marginBottom: 20, display: 'flex', gap: 12 }}>
+                <div style={{
+                  width: 26, height: 26, borderRadius: 999, flexShrink: 0,
+                  background: m.role === 'user' ? 'var(--ink)' : 'var(--acc-soft)',
+                  color: m.role === 'user' ? '#fff' : 'var(--acc-ink)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, fontWeight: 600, marginTop: 2,
+                }}>
+                  {m.role === 'user' ? 'AF' : <span className="serif" style={{ fontSize: 15, fontStyle: 'italic' }}>a</span>}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="label-xs" style={{ marginBottom: 4 }}>
+                    {m.role === 'user' ? 'Ты' : 'Ассистент'}
+                  </div>
+                  <div style={{ fontSize: 14, lineHeight: 1.65, color: 'var(--ink-2)', whiteSpace: 'pre-wrap' }}>
+                    {m.text.split('`').map((p, idx) =>
+                      idx % 2 === 1
+                        ? <code key={idx} className="mono" style={{
+                            background: 'var(--panel)', padding: '1px 5px', borderRadius: 4, fontSize: 12.5,
+                          }}>{p}</code>
+                        : <React.Fragment key={idx}>{p}</React.Fragment>
+                    )}
+                  </div>
+                  {m.hasAction && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      <button className="btn btn-primary" style={{ fontSize: 12 }}>
+                        <Icon.check /> Да, переключи
+                      </button>
+                      <button className="btn" style={{ fontSize: 12 }}>Нет, я сам</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {thinking && (
+              <div style={{ display: 'flex', gap: 12, color: 'var(--mute)', fontSize: 13 }}>
+                <div style={{ width: 26, height: 26 }} />
+                <div className="fade-in">
+                  думаю<span style={{ animation: 'blink 1s infinite' }}>…</span>
+                </div>
+              </div>
+            )}
+            <div ref={endRef} />
+          </div>
+
+          {/* Input */}
+          <div style={{ borderTop: '1px solid var(--line)', padding: 16 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+              {suggestions.map((s, i) => (
+                <button key={i} className="chip" style={{ cursor: 'pointer' }}
+                  onClick={() => setInput(s)}>
+                  {s}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'stretch' }}>
+              <textarea
+                className="text-input"
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+                placeholder={t.askPlaceholder}
+                style={{ resize: 'none', flex: 1, minHeight: 44 }}
+              />
+              <button className="btn btn-primary" disabled={!input.trim()} onClick={send}>
+                <Icon.arrow />
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--mute-2)', marginTop: 8 }}>
+              <span><span className="kbd">⏎</span> отправить</span>
+              <span><span className="kbd">⇧⏎</span> новая строка</span>
+              <div style={{ flex: 1 }} />
+              <span>провайдер <span className="mono" style={{ color: 'var(--mute)' }}>claude-sonnet-4.6</span></span>
+              <span>кэш <span style={{ color: 'var(--ok)' }}>on</span></span>
+            </div>
+          </div>
+        </div>
+
+        <style>{`@keyframes blink { 50% { opacity: 0.3 } }`}</style>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { AssistantTab });
+
+
+// === settings.jsx ===
+// Tab: Settings
+function SettingsTab({ t, lang }) {
+  const [activeSection, setActiveSection] = React.useState('integrations');
+  const [keys, setKeys] = React.useState(
+    INTEGRATIONS.reduce((acc, i) => ({ ...acc, [i.id]: i.configured }), {})
+  );
+
+  const sections = [
+    ['integrations', 'Интеграции', INTEGRATIONS.length],
+    ['storage', 'Хранилище', null],
+    ['assistant', 'Ассистент', null],
+    ['enrich', 'Обогащение', null],
+    ['advanced', 'Продвинутые', null],
+  ];
+
+  return (
+    <div className="fade-in">
+      <EditorialHeader
+        eyebrow="Настройки"
+        title="Интеграции и"
+        accent="режимы работы."
+        sub={lang === 'ru'
+          ? 'Ключи API, локальные движки, политика хранения, настройки ассистента и пайплайна обогащения.'
+          : 'API keys, local engines, retention policy, assistant and enrichment pipeline.'}
+      />
+
+      <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 36 }}>
+        {/* Nav */}
+        <aside>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {sections.map(([id, lbl, ct]) => (
+              <button key={id} onClick={() => setActiveSection(id)}
+                style={{
+                  textAlign: 'left', padding: '9px 14px', borderRadius: 8,
+                  fontSize: 13.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  background: activeSection === id ? 'var(--panel)' : 'transparent',
+                  color: activeSection === id ? 'var(--ink)' : 'var(--mute)',
+                  fontWeight: activeSection === id ? 500 : 400,
+                }}>
+                <span>{lbl}</span>
+                {ct && <span className="mono" style={{ fontSize: 10.5, color: 'var(--mute-2)' }}>{ct}</span>}
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        {/* Content */}
+        <div>
+          {activeSection === 'integrations' && <IntegrationsSection keys={keys} setKeys={setKeys} lang={lang} />}
+          {activeSection === 'storage' && <StorageSection />}
+          {activeSection === 'assistant' && <AssistantSection />}
+          {activeSection === 'enrich' && <EnrichSection />}
+          {activeSection === 'advanced' && <AdvancedSection />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IntegrationsSection({ keys, setKeys, lang }) {
+  return (
+    <div>
+      <div style={{ display: 'grid', gap: 12 }}>
+        {INTEGRATIONS.map(i => (
+          <div key={i.id} className="card" style={{ padding: 18, display: 'grid',
+            gridTemplateColumns: 'auto 1fr auto auto', gap: 18, alignItems: 'center',
+          }}>
+            <div style={{
+              width: 38, height: 38, borderRadius: 10,
+              background: i.kind === 'cloud' ? 'var(--acc-soft)' : 'var(--panel)',
+              color: i.kind === 'cloud' ? 'var(--acc-ink)' : 'var(--ink)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: "'Instrument Serif', serif", fontSize: 20,
+            }}>
+              {i.name[0]}
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2 }}>
+                <span style={{ fontSize: 14.5, fontWeight: 500 }}>{i.name}</span>
+                <Chip style={{ fontSize: 10 }}>{i.kind}</Chip>
+                {keys[i.id] && <StatusChip status="approved" />}
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--mute)' }}>
+                {lang === 'ru' ? i.desc : i.descEn}
+                {i.masked && <span className="mono" style={{ marginLeft: 10, color: 'var(--mute-2)' }}>{i.masked}</span>}
+              </div>
+            </div>
+            <a href={'https://' + i.website} target="_blank" className="btn btn-ghost"
+              style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--mute)' }}>
+              {i.website} <Icon.ext />
+            </a>
+            <div className="toggle" onClick={() => setKeys({ ...keys, [i.id]: !keys[i.id] })}
+              {...(keys[i.id] ? { className: 'toggle on' } : {})}
+              style={{ cursor: 'pointer' }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StorageSection() {
+  const stats = [
+    { label: 'Размер БД', value: '124 MB', sub: 'videotext.db' },
+    { label: 'Медиа-чанки', value: '3.2 GB', sub: '1 420 файлов' },
+    { label: 'Изображения', value: '184 MB', sub: '246 файлов' },
+    { label: 'Старейшая запись', value: '12 дн', sub: 'NewsItem #47' },
+  ];
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 28 }}>
+        {stats.map((s, i) => (
+          <div key={i} className="card" style={{ padding: 16 }}>
+            <div className="label-xs" style={{ marginBottom: 6 }}>{s.label}</div>
+            <div className="serif" style={{ fontSize: 28, letterSpacing: '-0.02em' }}>{s.value}</div>
+            <div className="mono" style={{ fontSize: 10.5, color: 'var(--mute-2)', marginTop: 2 }}>{s.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <Section label="Политика хранения">
+        <div className="card" style={{ padding: 20 }}>
+          {[
+            ['Видео + транскрипты', 365, 3650],
+            ['Чанки live-стримов (MP3)', 7, 60],
+            ['Транскрипты чанков', 30, 365],
+            ['Новости (одобренные)', 180, 3650],
+            ['Новости (draft/rejected)', 14, 365],
+          ].map(([label, val, max], i) => (
+            <div key={i} style={{
+              display: 'grid', gridTemplateColumns: '240px 1fr 80px', gap: 16, alignItems: 'center',
+              padding: '14px 0', borderTop: i === 0 ? 'none' : '1px solid var(--line)',
+            }}>
+              <div style={{ fontSize: 13.5 }}>{label}</div>
+              <input type="range" min={0} max={max} defaultValue={val} style={{ width: '100%' }} />
+              <div className="mono" style={{ fontSize: 12, textAlign: 'right' }}>
+                <span style={{ color: 'var(--ink)' }}>{val}</span>
+                <span style={{ color: 'var(--mute-2)' }}> дн</span>
+              </div>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 10, marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+            <button className="btn">Dry run</button>
+            <button className="btn btn-primary">Применить</button>
+            <div style={{ flex: 1 }} />
+            <span style={{ fontSize: 12, color: 'var(--mute)' }}>будет удалено ~412 МБ</span>
+          </div>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function AssistantSection() {
+  return (
+    <div className="card" style={{ padding: 24 }}>
+      <Field label="Провайдер">
+        <div style={{ display: 'flex', gap: 4, background: 'var(--panel)', padding: 3, borderRadius: 8, width: 'fit-content' }}>
+          {['openai', 'anthropic', 'ollama'].map((p, i) => (
+            <button key={p} style={{
+              padding: '6px 14px', fontSize: 13, borderRadius: 6,
+              background: i === 1 ? 'var(--surface)' : 'transparent',
+              color: i === 1 ? 'var(--ink)' : 'var(--mute)',
+              fontWeight: i === 1 ? 500 : 400,
+            }}>{p}</button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Модель">
+        <input className="text-input mono" defaultValue="claude-sonnet-4-6" style={{ maxWidth: 360 }}/>
+      </Field>
+      <Field label="Кэш Q&A" sub="Сохранять ответы и возвращать их, если следующий вопрос семантически близок.">
+        <div className="toggle on" style={{ cursor: 'pointer' }} />
+      </Field>
+      <Field label="Порог схожести для кэша">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, maxWidth: 360 }}>
+          <input type="range" min="0.5" max="1" step="0.01" defaultValue="0.85" style={{ flex: 1 }} />
+          <span className="mono" style={{ fontSize: 13 }}>0.85</span>
+        </div>
+      </Field>
+      <Field label="Автоподтверждение действий" sub="Разрешить ассистенту менять настройки без отдельного клика.">
+        <div className="toggle" style={{ cursor: 'pointer' }} />
+      </Field>
+    </div>
+  );
+}
+
+function EnrichSection() {
+  return (
+    <div className="card" style={{ padding: 24 }}>
+      <Field label="Модель для расширенного текста">
+        <SelectMini value="gpt-4o-mini" onChange={()=>{}}
+          options={[['gpt-4o-mini','gpt-4o-mini'], ['gpt-4o','gpt-4o'], ['claude-haiku','claude-haiku-4.5']]} />
+      </Field>
+      <Field label="Источник изображений">
+        <div style={{ display: 'flex', gap: 6 }}>
+          {['hybrid', 'dall-e-3', 'pexels', 'none'].map((v, i) => (
+            <button key={v} style={{
+              padding: '6px 12px', borderRadius: 8, fontSize: 12.5,
+              background: i === 0 ? 'var(--ink)' : 'var(--surface)',
+              color: i === 0 ? '#fff' : 'var(--mute)',
+              border: '1px solid ' + (i === 0 ? 'var(--ink)' : 'var(--line)'),
+            }}>{v}</button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Дедуп-порог изображений">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, maxWidth: 360 }}>
+          <input type="range" min="0.5" max="1" step="0.01" defaultValue="0.88" style={{ flex: 1 }} />
+          <span className="mono" style={{ fontSize: 13 }}>0.88</span>
+        </div>
+      </Field>
+      <Field label="Embeddings провайдер">
+        <SelectMini value="fastembed" onChange={()=>{}}
+          options={[['fastembed','fastembed (local)'], ['openai','text-embedding-3-small'], ['ollama','nomic-embed-text']]} />
+      </Field>
+    </div>
+  );
+}
+
+function AdvancedSection() {
+  return (
+    <div className="card" style={{ padding: 24 }}>
+      <Field label="Webhook-токен" sub="Требовать X-Webhook-Token на POST /briefs.">
+        <input className="text-input mono" placeholder="необязательно" style={{ maxWidth: 360 }}/>
+      </Field>
+      <Field label="OUTPUT_DIR">
+        <input className="text-input mono" defaultValue="./output" style={{ maxWidth: 360 }}/>
+      </Field>
+      <Field label="Cookies.txt" sub="Для yt-dlp при приватных/залогиненных каналах.">
+        <button className="btn">Загрузить файл</button>
+      </Field>
+      <Field label="Debug-логи">
+        <div className="toggle" style={{ cursor: 'pointer' }} />
+      </Field>
+    </div>
+  );
+}
+
+function Field({ label, sub, children }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 24,
+      padding: '16px 0', borderTop: '1px solid var(--line)',
+      borderTopColor: 'var(--line)' }}>
+      <div>
+        <div style={{ fontSize: 13.5, fontWeight: 500 }}>{label}</div>
+        {sub && <div style={{ fontSize: 12, color: 'var(--mute)', marginTop: 2 }}>{sub}</div>}
+      </div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+Object.assign(window, { SettingsTab });
+
+
+// === app.jsx ===
+// App shell
+function App() {
+  const [tab, setTab] = React.useState(() => localStorage.getItem('vt_tab') || 'video');
+  const [lang, setLang] = React.useState(() => localStorage.getItem('vt_lang') || 'ru');
+  const t = I18N[lang];
+
+  React.useEffect(() => localStorage.setItem('vt_tab', tab), [tab]);
+  React.useEffect(() => localStorage.setItem('vt_lang', lang), [lang]);
+
+  return (
+    <div>
+      <TopBar active={tab} onTab={setTab} lang={lang} onLang={setLang} t={t} />
+      <main style={{ maxWidth: 1280, margin: '0 auto', padding: '40px 32px 80px' }}>
+        {tab === 'video'     && <VideoTab t={t} lang={lang} />}
+        {tab === 'streams'   && <StreamsTab t={t} lang={lang} />}
+        {tab === 'news'      && <NewsTab t={t} lang={lang} />}
+        {tab === 'assistant' && <AssistantTab t={t} lang={lang} />}
+        {tab === 'settings'  && <SettingsTab t={t} lang={lang} />}
+      </main>
+      <footer style={{
+        maxWidth: 1280, margin: '0 auto', padding: '20px 32px 40px',
+        borderTop: '1px solid var(--line)',
+        display: 'flex', alignItems: 'center', gap: 16, fontSize: 11.5, color: 'var(--mute-2)',
+      }}>
+        <span className="serif" style={{ fontSize: 16, color: 'var(--ink)' }}>VideoText</span>
+        <span>локальный инструмент · SQLite + Prisma · работает на твоей машине</span>
+        <div style={{ flex: 1 }} />
+        <a href="#" style={{ color: 'var(--mute)' }}>Swagger /docs ↗</a>
+        <span className="mono">v0.4.0</span>
+      </footer>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+
+</script>
+</body>
+</html>

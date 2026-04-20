@@ -1,0 +1,243 @@
+// SQLite file-based DB. Zero-setup, single-file, perfect for a local CLI.
+// If the pipeline grows beyond one machine — swap provider to postgresql and
+// point `url` at a managed DB (Neon/Supabase); the rest of the schema stays.
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./videotext.db"
+}
+
+generator client {
+  provider             = "prisma-client-py"
+  recursive_type_depth = 5
+  interface            = "asyncio"
+}
+
+// ─── Core entities ────────────────────────────────────────────────
+
+model Video {
+  id        String   @id // YouTube video ID (11 chars)
+  url       String
+  title     String?
+  duration  Int? // seconds
+  language  String? // actual transcript language (e.g. "en")
+  source    String // "supadata" | "ytdlp"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  segments Segment[]
+  briefs   Brief[]
+  runs     Run[]
+}
+
+model Segment {
+  id      Int    @id @default(autoincrement())
+  videoId String
+  video   Video  @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  index   Int // order within the video
+  start   Float // seconds
+  end     Float
+  text    String
+
+  @@unique([videoId, index])
+}
+
+model Brief {
+  id               Int      @id @default(autoincrement())
+  videoId          String
+  video            Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  model            String // e.g. "claude-sonnet-4-6"
+  language         String // brief output language ("ru" | "en")
+  format           String // "markdown" | "json"
+  contentMd        String // always populated; for format=json this is the raw JSON string
+  contentJson      String? // structured JSON when format=json (parseable)
+  promptVersion    String   @default("v1")
+  inputTokens      Int
+  outputTokens     Int
+  cacheReadTokens  Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  costUsd          Float? // computed at save time
+  createdAt        DateTime @default(now())
+}
+
+model Run {
+  id          Int       @id @default(autoincrement())
+  videoId     String?
+  video       Video?    @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  url         String
+  status      String // "ok" | "error"
+  error       String?
+  triggeredBy String    @default("cli") // "cli" | "batch" | "webhook"
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+}
+
+// ─── Phase 1: live retransmission ──────────────────────────────────
+
+model LiveStream {
+  id                String   @id @default(cuid())
+  url               String
+  channelName       String
+  speakerDefault    String?
+  intervalMin       Int      @default(5)
+  status            String   @default("active") // active | paused | stopped
+  makeSummaryBrief  Boolean  @default(false)
+  briefTemplate     String   @default("news") // news | full
+  autoBriefOnStop   Boolean  @default(false)
+  whisperModel      String   @default("medium") // tiny | base | small | medium | large-v3 | distil-large-v3
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  chunks       Chunk[]
+  newsItems    NewsItem[]
+  streamBriefs StreamBrief[]
+}
+
+model Chunk {
+  id             String   @id @default(cuid())
+  streamId       String
+  stream         LiveStream @relation(fields: [streamId], references: [id], onDelete: Cascade)
+  index          Int
+  startedAt      DateTime
+  durationSec    Float
+  audioPath      String? // nullable — set to null after retention cleanup deletes the file
+  audioDeletedAt DateTime?
+  transcriptText String?
+  status         String   @default("pending") // pending | transcribed | extracted | failed
+  error          String?
+  createdAt      DateTime @default(now())
+
+  newsItems NewsItem[]
+
+  @@unique([streamId, index])
+}
+
+model NewsItem {
+  id          Int      @id @default(autoincrement())
+  // News items outlive their chunks: when a chunk is purged, we keep the news
+  // item but null out the reference (SetNull). Stream deletion still cascades
+  // because cleaning up a whole stream includes its news.
+  chunkId     String?
+  chunk       Chunk?   @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+  streamId    String
+  stream      LiveStream @relation(fields: [streamId], references: [id], onDelete: Cascade)
+  headline    String
+  quote       String
+  category    String?
+  offsetSec   Float
+  confidence  Float
+  tags        String   @default("[]") // JSON-encoded string list
+  status      String   @default("draft") // draft | approved | rejected | exported
+  attribution String
+
+  // Semantic dedup
+  embedding       String? // JSON-encoded float array; null if dedup was disabled at insert time
+  duplicateOfId   Int?    // points to an earlier item considered semantically equivalent
+  duplicateOf     NewsItem? @relation("DuplicateLink", fields: [duplicateOfId], references: [id], onDelete: SetNull)
+  duplicates      NewsItem[] @relation("DuplicateLink")
+  duplicateSim    Float?  // cosine similarity 0-1, for debugging / threshold tuning
+
+  // Enrichment: expanded context + illustration
+  expandedText    String? // AI-generated full article version
+  expandedModel   String? // model used (e.g. gpt-4o-mini)
+  expandedCostUsd Float?
+  imageId         Int?
+  image           NewsImage? @relation(fields: [imageId], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime @default(now())
+}
+
+// Illustration pool — reusable across news items with similar visual concept.
+model NewsImage {
+  id               Int      @id @default(autoincrement())
+  conceptPhrase    String   // short English phrase, e.g. "crude oil barrel" / "stock ticker chart"
+  conceptEmbedding String?  // JSON float[] for semantic matching
+  prompt           String   // exact prompt sent to the image model
+  filePath         String   // ./images/<id>-<slug>.png
+  model            String   // "dall-e-3" | "gpt-image-1" | "dall-e-2"
+  costUsd          Float?
+  reuseCount       Int      @default(0)  // incremented each time this image is attached to a new item
+  createdAt        DateTime @default(now())
+
+  newsItems        NewsItem[]
+}
+
+model StreamBrief {
+  id               Int      @id @default(autoincrement())
+  streamId         String
+  stream           LiveStream @relation(fields: [streamId], references: [id], onDelete: Cascade)
+  template         String // news | full
+  contentMd        String
+  contentJson      String?
+  model            String
+  inputTokens      Int
+  outputTokens     Int
+  cacheReadTokens  Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  costUsd          Float?
+  chunksCovered    Int
+  createdAt        DateTime @default(now())
+}
+
+// Global user preferences / defaults. Simple JSON-encoded key-value store.
+model AppSetting {
+  key       String   @id
+  value     String // JSON-encoded — any scalar or structure
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Phase 2: AI Assistant ─────────────────────────────────────────
+// Operational helper: answers "how to configure X" / "why did Y fail"
+// via cherry-picked context + tool-use (read DB, test integrations, save settings).
+
+model AssistantSession {
+  id        String   @id @default(cuid())
+  title     String?  // auto-generated from first question
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages AssistantMessage[]
+}
+
+model AssistantMessage {
+  id              Int      @id @default(autoincrement())
+  sessionId       String
+  session         AssistantSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role            String   // "user" | "assistant" | "tool"
+  content         String   // plain text; for tool calls this is JSON {name, args, result}
+  model           String?  // provider/model that produced this (null for user msgs)
+  inputTokens     Int      @default(0)
+  outputTokens    Int      @default(0)
+  cacheReadTokens Int      @default(0)
+  costUsd         Float?
+  cacheHit        Boolean  @default(false) // true if answer came from AssistantCache
+  toolCalls       String?  // JSON array of tool calls made during this turn
+  createdAt       DateTime @default(now())
+}
+
+// Fuzzy Q&A cache: if a new question matches a past one by embedding
+// similarity > threshold, reuse the stored answer (no AI tokens spent).
+model AssistantCache {
+  id          Int      @id @default(autoincrement())
+  question    String
+  answer      String
+  embedding   String?  // JSON float[] — fastembed vector (null if dedup disabled)
+  usedCount   Int      @default(1)
+  lastUsedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+}
+
+// Static knowledge: parsed and cached so we don't re-parse the codebase
+// on every chat turn. Rebuilt on demand via /assistant/refresh-kb.
+model AssistantKB {
+  id          Int      @id @default(autoincrement())
+  kind        String   // "code_module" | "setup_guide" | "error_pattern" | "schema"
+  key         String   // e.g. "server.py::save_settings" or "setup.ollama"
+  title       String
+  body        String   // plain text (markdown ok)
+  tokens      String   // JSON list of tokens for TF-IDF
+  embedding   String?  // JSON float[] — optional semantic index
+  updatedAt   DateTime @updatedAt
+
+  @@unique([kind, key])
+}

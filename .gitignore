@@ -1,0 +1,17 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+output/
+cookies.txt
+*.cookies.txt
+
+# Runtime artifacts
+chunks/
+images/
+.playwright-mcp/
+_test/
+prisma/videotext.db
+prisma/test.db
+*.db-journal

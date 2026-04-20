@@ -1,0 +1,125 @@
+# Curated error catalog. Assistant matches user-reported errors (or log lines)
+# against `pattern` regex and returns the ready fix. Cheaper + more accurate
+# than TF-IDF over code for operational questions.
+#
+# Schema:
+#   id: stable identifier (kebab-case)
+#   pattern: case-insensitive regex matched against error text / log
+#   category: grouping for UI badges (gpu, youtube, supadata, openai, anthropic, pexels, ollama, ffmpeg, db)
+#   title_ru: short label for chat
+#   fix_steps: ordered list of human-readable steps (Russian)
+#   auto_fix: optional shell command or tool call the assistant can offer to run
+#   docs_url: optional upstream reference
+
+- id: cublas-missing
+  pattern: "cublas64.*not\\s*found|Could not locate cublasLt|cuBLAS.*DLL"
+  category: gpu
+  title_ru: "cuBLAS DLL отсутствует — нужен CUDA runtime"
+  fix_steps:
+    - "Установи CUDA runtime для faster-whisper:"
+    - "pip install nvidia-cublas-cu12 nvidia-cudnn-cu12"
+    - "Перезапусти сервер — faster-whisper подцепит DLL через os.add_dll_directory."
+    - "Если ошибка повторяется: проверь что в `transcribe.py` PATH пополняется путями к этим пакетам *до* импорта ctranslate2."
+  auto_fix: "pip install nvidia-cublas-cu12 nvidia-cudnn-cu12"
+
+- id: ffmpeg-not-found
+  pattern: "ffmpeg.*not\\s*(found|recognized)|No such file or directory.*ffmpeg|ffmpeg is not installed"
+  category: ffmpeg
+  title_ru: "ffmpeg не найден в PATH"
+  fix_steps:
+    - "На Windows поставь через winget: `winget install Gyan.FFmpeg`"
+    - "После установки открой НОВЫЙ терминал (старый не увидит обновлённый PATH)."
+    - "Проверь: `ffmpeg -version`"
+    - "Если всё равно не видит — `capture.find_ffmpeg()` ищет в winget-путях, но может не достать user-scoped установки."
+  auto_fix: "winget install Gyan.FFmpeg"
+
+- id: ytdlp-429
+  pattern: "HTTP Error 429|Too Many Requests|Sign in to confirm you're not a bot"
+  category: youtube
+  title_ru: "YouTube блокирует yt-dlp (429 или проверка на бота)"
+  fix_steps:
+    - "YouTube сейчас требует PO-Token / cookies для yt-dlp."
+    - "Быстрый обход: пользуйся Supadata (Path 2) — у тебя ключ уже в .env."
+    - "Проверь что в настройках `transcript_source: supadata`."
+    - "Если нужен именно yt-dlp: установи curl-cffi<0.12 и передай --impersonate chrome; кукисы из профиля Chrome/Firefox."
+
+- id: supadata-503
+  pattern: "supadata.*503|Supadata.*temporarily unavailable|supadata.*Service Unavailable"
+  category: supadata
+  title_ru: "Supadata API вернул 503 — их сервис временно недоступен"
+  fix_steps:
+    - "Это на стороне Supadata. Подожди 1-2 минуты и повтори."
+    - "Если нужно срочно: дернём ручкой /config/test?provider=supadata чтобы проверить доступность."
+    - "Для мета-данных (title/duration) есть фолбэк на YouTube oEmbed — он уже встроен."
+
+- id: anthropic-auth
+  pattern: "anthropic.*authentication_error|invalid.*x-api-key|Anthropic.*401"
+  category: anthropic
+  title_ru: "Неверный Anthropic API key"
+  fix_steps:
+    - "Ключ Anthropic начинается с `sk-ant-api03-...`"
+    - "Получить: console.anthropic.com → Settings → API keys"
+    - "Вставь в Settings → Anthropic → Save (или в .env: ANTHROPIC_API_KEY=...)"
+    - "После обновления .env сервер надо перезапустить (load_dotenv override=True, но uvicorn не переоценивает переменные без рестарта)."
+  docs_url: "https://console.anthropic.com/settings/keys"
+
+- id: openai-auth
+  pattern: "openai.*authentication|Incorrect API key|invalid.*openai"
+  category: openai
+  title_ru: "Неверный OpenAI API key"
+  fix_steps:
+    - "Ключ OpenAI начинается с `sk-proj-...` или `sk-...`"
+    - "Получить: platform.openai.com/api-keys"
+    - "Вставь в Settings → OpenAI → Save"
+    - "Биллинг должен быть пополнен — бесплатного тира на gpt-4o нет."
+  docs_url: "https://platform.openai.com/api-keys"
+
+- id: pexels-auth
+  pattern: "pexels.*401|pexels.*unauthorized|pexels.*invalid"
+  category: pexels
+  title_ru: "Pexels API key не настроен или неверный"
+  fix_steps:
+    - "Зайди на pexels.com/api и нажми Get Started (бесплатно, нужен email)."
+    - "Скопируй свой API key (строка из ~56 символов, без префикса)."
+    - "Settings → Pexels → вставь → Save"
+    - "200 запросов/час бесплатно. Ассистент использует Pexels в hybrid-режиме обогащения новостей."
+  docs_url: "https://www.pexels.com/api/"
+
+- id: ollama-down
+  pattern: "ollama.*not responding|Connection refused.*11434|ollama.*connection error"
+  category: ollama
+  title_ru: "Ollama не отвечает на localhost:11434"
+  fix_steps:
+    - "Запусти сервис: `ollama serve` в отдельном терминале (или установи autostart)."
+    - "Если не установлена: `winget install Ollama.Ollama`"
+    - "После запуска скачай модель для эмбеддингов: `ollama pull nomic-embed-text`"
+    - "Проверь: `curl http://localhost:11434/api/tags`"
+  auto_fix: "ollama serve"
+  docs_url: "https://ollama.com/download"
+
+- id: prisma-not-generated
+  pattern: "cannot import name 'Prisma' from 'prisma'|prisma.*not generated"
+  category: db
+  title_ru: "Prisma client не сгенерирован"
+  fix_steps:
+    - "Из корня проекта: `.venv/Scripts/prisma.exe generate`"
+    - "Убедись что PATH содержит `.venv/Scripts` — иначе генератор prisma-client-py не запустится."
+    - "После генерации сервер надо перезапустить."
+
+- id: dotenv-override
+  pattern: "Expected ANTHROPIC_API_KEY|OPENAI_API_KEY.*empty|key.*not set"
+  category: anthropic
+  title_ru: ".env не подхватывается — переменная окружения пустая"
+  fix_steps:
+    - "В Windows системный env может переопределять .env."
+    - "В `server.py` уже стоит `load_dotenv(override=True)` — это должно помочь."
+    - "Если всё равно пусто: проверь `echo %ANTHROPIC_API_KEY%` в cmd — если там что-то есть, удали системную переменную или перезагрузи IDE/терминал."
+
+- id: chunk-zero-bytes
+  pattern: "0.*bytes|empty audio|chunk.*too small"
+  category: ffmpeg
+  title_ru: "ffmpeg-чанк получился пустой"
+  fix_steps:
+    - "Обычно случается при экстренной остановке стрима (SIGKILL)."
+    - "В orchestrator уже стоит SIGTERM + ожидание — файлы ≥64KB принимаются как partial."
+    - "Если все чанки пустые: проверь что HLS URL доступен и канал действительно стримит."
