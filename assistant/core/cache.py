@@ -49,13 +49,18 @@ async def find_cached_answer(
     db: Prisma,
     question: str,
     *,
+    persona: str = "platform",
     threshold: float = DEFAULT_SIMILARITY,
 ) -> dict | None:
     """Return {question, answer, similarity} or None."""
     if not question.strip():
         return None
 
-    rows = await db.assistantcache.find_many(order={"lastUsedAt": "desc"}, take=500)
+    rows = await db.assistantcache.find_many(
+        where={"persona": persona},
+        order={"lastUsedAt": "desc"},
+        take=500,
+    )
     if not rows:
         return None
 
@@ -98,7 +103,7 @@ async def find_cached_answer(
     return None
 
 
-async def save_qa(db: Prisma, question: str, answer: str) -> None:
+async def save_qa(db: Prisma, question: str, answer: str, persona: str = "platform") -> None:
     """Persist a new Q&A pair with its embedding."""
     emb = _embed(question)
     emb_json = json.dumps(emb) if emb else None
@@ -107,6 +112,7 @@ async def save_qa(db: Prisma, question: str, answer: str) -> None:
             "question": question,
             "answer": answer,
             "embedding": emb_json,
+            "persona": persona,
         }
     )
     # Trim cache: keep last 500 entries

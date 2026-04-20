@@ -974,7 +974,7 @@ async def assistant_chat(req: AssistantChatRequest):
             if answer_text and not any(e for e in [] if False):  # naive — future: skip if cache_hit
                 from assistant.core.cache import save_qa
                 try:
-                    await save_qa(db, req.question, answer_text)
+                    await save_qa(db, req.question, answer_text, persona="platform")
                 except Exception:
                     pass
         finally:

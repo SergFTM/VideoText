@@ -174,7 +174,8 @@ class Assistant:
         """
         # 1. Cache lookup
         if self.use_cache:
-            cached = await find_cached_answer(db, question, threshold=self.cache_threshold)
+            persona_name = self.persona.name if self.persona else "platform"
+            cached = await find_cached_answer(db, question, persona=persona_name, threshold=self.cache_threshold)
             if cached:
                 yield {
                     "type": "cache_hit",
