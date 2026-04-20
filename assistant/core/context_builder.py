@@ -23,8 +23,8 @@ from typing import Any
 import yaml
 from prisma import Prisma
 
-from assistant.analyzer import score_db_item, score_kb_chunk, tokenize
-from assistant.knowledge_base import ASSISTANT_DIR, load_kb
+from assistant.core.analyzer import score_db_item, score_kb_chunk, tokenize
+from assistant.core.knowledge_base import ASSISTANT_DIR, load_kb
 
 # Caps for individual sections — prevents runaway prompts
 MAX_KB_CHUNKS = 6

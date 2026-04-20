@@ -16,7 +16,7 @@ from typing import Any
 
 from prisma import Prisma
 
-from assistant.analyzer import jaccard, tokenize
+from assistant.core.analyzer import jaccard, tokenize
 
 
 # Threshold: start at 0.82 for fastembed (empirical — similar to news dedup).

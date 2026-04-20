@@ -19,8 +19,8 @@ from typing import Any, AsyncIterator, Callable
 
 from prisma import Prisma
 
-from assistant.cache import find_cached_answer, save_qa
-from assistant.context_builder import build_context
+from assistant.core.cache import find_cached_answer, save_qa
+from assistant.core.context_builder import build_context
 from assistant.tools import (
     TOOLS, anthropic_schema, execute_tool, openai_schema,
 )

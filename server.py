@@ -933,7 +933,7 @@ class AssistantChatRequest(BaseModel):
 @app.post("/assistant/chat")
 async def assistant_chat(req: AssistantChatRequest):
     """Stream the assistant answer via Server-Sent Events (one JSON per `data:` line)."""
-    from assistant.chat import Assistant
+    from assistant.core.chat import Assistant
 
     settings = await asyncio.to_thread(get_all_settings)
     provider = req.provider or settings.get("assistant_provider") or "openai"
@@ -970,7 +970,7 @@ async def assistant_chat(req: AssistantChatRequest):
             # Persist Q&A to cache (only if we actually generated a new answer)
             answer_text = "".join(final_answer_parts).strip()
             if answer_text and not any(e for e in [] if False):  # naive — future: skip if cache_hit
-                from assistant.cache import save_qa
+                from assistant.core.cache import save_qa
                 try:
                     await save_qa(db, req.question, answer_text)
                 except Exception:
@@ -984,7 +984,7 @@ async def assistant_chat(req: AssistantChatRequest):
 @app.post("/assistant/refresh-kb")
 async def assistant_refresh_kb():
     """Rebuild the AssistantKB from errors.yaml + kb_static.md + codebase AST."""
-    from assistant.knowledge_base import rebuild_kb
+    from assistant.core.knowledge_base import rebuild_kb
     counts = await rebuild_kb()
     return {"ok": True, "counts": counts}
 
@@ -992,7 +992,7 @@ async def assistant_refresh_kb():
 @app.get("/assistant/cache")
 async def assistant_list_cache(limit: int = 50):
     """Show recent cached Q&A pairs (for debugging / transparency)."""
-    from assistant.cache import list_cache
+    from assistant.core.cache import list_cache
     db = Prisma()
     await db.connect()
     try:
@@ -1003,7 +1003,7 @@ async def assistant_list_cache(limit: int = 50):
 
 @app.delete("/assistant/cache")
 async def assistant_clear_cache():
-    from assistant.cache import clear_cache
+    from assistant.core.cache import clear_cache
     db = Prisma()
     await db.connect()
     try:
