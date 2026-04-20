@@ -26,7 +26,7 @@ import os
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile
@@ -930,9 +930,10 @@ class AssistantChatRequest(BaseModel):
     model: str | None = None
 
 
-@app.post("/assistant/chat")
-async def assistant_chat(req: AssistantChatRequest):
-    """Stream the assistant answer via Server-Sent Events (one JSON per `data:` line)."""
+@app.post("/chat/platform")
+@app.post("/assistant/chat")  # legacy alias — remove in Phase 3
+async def chat_platform(req: AssistantChatRequest):
+    """Platform persona chat — handles settings, integrations, errors."""
     from assistant.core.chat import Assistant
     from assistant.personas.platform import PlatformPersona
 
@@ -981,6 +982,91 @@ async def assistant_chat(req: AssistantChatRequest):
             await db.disconnect()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+class EditorChatRequest(BaseModel):
+    question: str
+    session_id: str | None = None
+    item_id: int | None = None
+    stream_id: str | None = None
+    auto_confirm: bool = False
+    provider: Literal["openai", "anthropic", "ollama"] | None = None
+    model: str | None = None
+
+
+@app.post("/chat/editor")
+async def chat_editor(req: EditorChatRequest):
+    """Editor persona chat — handles news item content (headlines, quotes, images)."""
+    from assistant.core.chat import Assistant
+    from assistant.personas.editor import EditorPersona
+
+    settings = await asyncio.to_thread(get_all_settings)
+    provider = req.provider or settings.get("assistant_provider") or "openai"
+    model = req.model or settings.get("assistant_model") or (
+        "gpt-4o" if provider == "openai"
+        else "claude-sonnet-4-6" if provider == "anthropic"
+        else "llama3.1:8b"
+    )
+    cache_thr = float(settings.get("assistant_cache_similarity", 0.85))
+    use_cache = bool(settings.get("assistant_cache_enabled", True))
+
+    assistant = Assistant(
+        persona=EditorPersona(),
+        provider=provider, model=model,
+        use_cache=use_cache, cache_threshold=cache_thr,
+    )
+
+    async def event_stream():
+        db = Prisma()
+        await db.connect()
+        try:
+            final_answer_parts: list[str] = []
+            ui_context = {"item_id": req.item_id, "stream_id": req.stream_id}
+            async for ev in assistant.ask_stream(
+                db, req.question,
+                session_id=req.session_id,
+                ui_context=ui_context,
+                auto_confirm=req.auto_confirm,
+            ):
+                if ev["type"] == "text":
+                    final_answer_parts.append(ev.get("delta", ""))
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+
+            answer_text = "".join(final_answer_parts).strip()
+            if answer_text:
+                from assistant.core.cache import save_qa
+                try:
+                    await save_qa(db, req.question, answer_text, persona="editor")
+                except Exception:
+                    pass
+        finally:
+            await db.disconnect()
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+class EditorApplyRequest(BaseModel):
+    item_id: int
+    field: Literal["headline", "quote", "expandedText", "imageId", "tags"]
+    value: Any
+    tool_call_id: str  # for audit; not validated, but logged
+
+
+@app.post("/chat/editor/apply")
+async def chat_editor_apply(req: EditorApplyRequest):
+    """Commit a previously-previewed edit to the news item."""
+    from store import apply_editor_change
+    try:
+        updated = await asyncio.to_thread(
+            apply_editor_change, req.item_id, req.field, req.value, req.tool_call_id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
+    return {"ok": True, "item_id": updated.id, "updated_field": req.field}
 
 
 @app.post("/assistant/refresh-kb")

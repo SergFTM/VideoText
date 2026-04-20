@@ -754,3 +754,30 @@ def update_news_item_enrichment(item_id, expanded_text, expanded_model, expanded
 
 def list_news_images(limit: int = 100):
     return asyncio.run(_list_news_images(limit))
+
+
+async def _apply_editor_change(item_id: int, field: str, value, tool_call_id: str):
+    """Async inner: update one NewsItem field."""
+    allowed = {"headline", "quote", "expandedText", "imageId", "tags"}
+    if field not in allowed:
+        raise ValueError(f"field {field!r} not in allowed set {sorted(allowed)}")
+    if field == "tags" and not isinstance(value, str):
+        value = json.dumps(value, ensure_ascii=False)
+
+    db = Prisma()
+    await db.connect()
+    try:
+        existing = await db.newsitem.find_unique(where={"id": item_id})
+        if existing is None:
+            raise LookupError(f"NewsItem {item_id} not found")
+        return await db.newsitem.update(
+            where={"id": item_id},
+            data={field: value},
+        )
+    finally:
+        await db.disconnect()
+
+
+def apply_editor_change(item_id: int, field: str, value, tool_call_id: str):
+    """Sync wrapper for the editor-apply endpoint. Returns the updated row."""
+    return asyncio.run(_apply_editor_change(item_id, field, value, tool_call_id))
