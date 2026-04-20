@@ -115,11 +115,10 @@ DB fixture: uses a separate SQLite file (`prisma/test.db`) that gets
 wiped between tests. Prisma's Python client does not support `:memory:` cleanly
 with the current schema because multiple connections don't share memory DBs.
 """
-import asyncio
 import os
-import shutil
+import subprocess
+import sys
 from pathlib import Path
-import pytest
 import pytest_asyncio
 
 TEST_DB_PATH = Path(__file__).parent.parent / "prisma" / "test.db"
@@ -131,11 +130,12 @@ async def db():
     if TEST_DB_PATH.exists():
         TEST_DB_PATH.unlink()
     os.environ["DATABASE_URL"] = f"file:{TEST_DB_PATH}"
-    # Push schema to create tables
-    import subprocess
+    # Invoke prisma via the active Python interpreter's -m entry point so we
+    # don't depend on `prisma` being on PATH (it's only in .venv/Scripts/).
     subprocess.run(
-        ["prisma", "db", "push", "--skip-generate", "--accept-data-loss"],
-        check=True, capture_output=True,
+        [sys.executable, "-m", "prisma", "db", "push",
+         "--skip-generate", "--accept-data-loss"],
+        check=True,
     )
     from prisma import Prisma
     client = Prisma()
