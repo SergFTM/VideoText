@@ -192,7 +192,8 @@ model AppSetting {
 
 model AssistantSession {
   id        String   @id @default(cuid())
-  title     String?  // auto-generated from first question
+  title     String?
+  persona   String   @default("platform")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -203,9 +204,10 @@ model AssistantMessage {
   id              Int      @id @default(autoincrement())
   sessionId       String
   session         AssistantSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  role            String   // "user" | "assistant" | "tool"
-  content         String   // plain text; for tool calls this is JSON {name, args, result}
-  model           String?  // provider/model that produced this (null for user msgs)
+  role            String
+  content         String
+  persona         String   @default("platform")
+  model           String?
   inputTokens     Int      @default(0)
   outputTokens    Int      @default(0)
   cacheReadTokens Int      @default(0)
@@ -221,7 +223,8 @@ model AssistantCache {
   id          Int      @id @default(autoincrement())
   question    String
   answer      String
-  embedding   String?  // JSON float[] — fastembed vector (null if dedup disabled)
+  persona     String   @default("platform")
+  embedding   String?
   usedCount   Int      @default(1)
   lastUsedAt  DateTime @default(now())
   createdAt   DateTime @default(now())
