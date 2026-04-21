@@ -101,7 +101,37 @@ def improve_headline(item_id: int, style: str = "", confirm: bool = False) -> di
 
 
 def rewrite_quote(item_id: int, tone: str = "", confirm: bool = False) -> dict:
-    return _stub_rewrite(item_id, "quote", f"[tone={tone}]")
+    item = store.get_news_item(item_id)
+    if not item:
+        return {"ok": False, "error": f"NewsItem {item_id} not found"}
+
+    old = item.quote or ""
+    system = (
+        "Ты — редактор новостных цитат. Перепиши цитату, СТРОГО сохраняя смысл "
+        "и факты (имена, числа, названия). Можешь менять формулировку и тон. "
+        "Не добавляй информацию, которой нет в оригинале. "
+        "Отдай только новый текст цитаты, без пояснений."
+    )
+    user = f"Цитата: {old}\n"
+    if tone:
+        user += f"Желаемый тон: {tone}\n"
+    user += "Переписанная цитата:"
+
+    try:
+        new = _llm_rewrite(system, user, max_tokens=300)
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    new = new.strip().strip('"').strip("«»").strip()
+
+    return {
+        "ok": True,
+        "tool_call_id": str(uuid.uuid4()),
+        "item_id": item_id,
+        "field": "quote",
+        "old": old,
+        "new": new,
+        "diff": _diff(old, new),
+    }
 
 
 def expand_text(item_id: int, length: str = "medium", confirm: bool = False) -> dict:

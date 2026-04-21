@@ -35,3 +35,26 @@ async def test_improve_headline_real(db):
     assert result["field"] == "headline"
     assert "tool_call_id" in result
     assert "diff" in result
+
+
+@pytest.mark.skipif(not LLM_KEYS_PRESENT, reason="No LLM key")
+@pytest.mark.asyncio
+async def test_rewrite_quote_real(db):
+    import asyncio
+    stream = await db.livestream.create(data={
+        "url": "https://ex.com", "channelName": "x",
+    })
+    item = await db.newsitem.create(data={
+        "streamId": stream.id,
+        "headline": "h",
+        "quote": "Цена нефти растёт из-за напряжения на ближнем востоке.",
+        "offsetSec": 0, "confidence": 0.9, "attribution": "x|1",
+    })
+    from assistant.tools.editor_tools import rewrite_quote
+    r = await asyncio.to_thread(rewrite_quote, item_id=item.id, tone="деловой")
+    assert r["ok"] is True, f"unexpected: {r}"
+    assert r["old"] == item.quote
+    assert r["new"] != r["old"]
+    assert len(r["new"]) > 20
+    assert r["field"] == "quote"
+    assert r["item_id"] == item.id
