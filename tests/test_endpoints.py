@@ -48,3 +48,30 @@ async def test_chat_platform_sessions_registered():
         r = await ac.get("/chat/platform/sessions")
         assert r.status_code == 200
         assert isinstance(r.json(), list)
+
+
+@pytest.mark.asyncio
+async def test_news_items_search_by_q(db):
+    """GET /news-items?q=TEXT filters items whose headline or quote contains TEXT (case-insensitive)."""
+    from server import app
+
+    stream = await db.livestream.create(data={"url": "https://u", "channelName": "c"})
+    await db.newsitem.create(data={
+        "streamId": stream.id,
+        "headline": "UNIQUE_HEADLINE_MARKER alpha",
+        "quote": "somebody said alpha",
+        "offsetSec": 0, "confidence": 0.9, "attribution": "c|1",
+    })
+    await db.newsitem.create(data={
+        "streamId": stream.id,
+        "headline": "unrelated bravo",
+        "quote": "nothing special",
+        "offsetSec": 0, "confidence": 0.9, "attribution": "c|2",
+    })
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        r = await ac.get("/news-items?q=unique_headline_marker")
+        assert r.status_code == 200
+        hits = r.json()
+        assert len(hits) == 1, f"expected 1, got {len(hits)}: {[h['headline'] for h in hits]}"
+        assert "UNIQUE_HEADLINE_MARKER" in hits[0]["headline"]

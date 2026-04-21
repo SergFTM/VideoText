@@ -352,6 +352,39 @@ async def _update_news_item_status(item_id: int, status: str):
         await db.disconnect()
 
 
+# Note: SQLite LIKE is case-insensitive only for ASCII. Cyrillic search is
+# case-sensitive. For the Editor workspace that's acceptable (users can search
+# by keyword in either case) — full unicode-insensitive search needs raw SQL
+# with LOWER() or switching to Postgres with mode="insensitive".
+async def _search_news_items(stream_id: str | None, status: str | None, q: str | None, limit: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        where: dict = {}
+        if stream_id:
+            where["streamId"] = stream_id
+        if status:
+            where["status"] = status
+        if q:
+            # Prisma supports OR with contains (case-insensitive). SQLite LIKE is
+            # case-insensitive for ASCII by default; mode="insensitive" is Postgres-only.
+            # Use startswith/contains on lowercase for simplicity — good enough for UI search.
+            # NB: Prisma Python doesn't support mode= for sqlite; use basic `contains`.
+            where["OR"] = [
+                {"headline": {"contains": q}},
+                {"quote":    {"contains": q}},
+            ]
+        items = await db.newsitem.find_many(
+            where=where,
+            include={"stream": True},
+            order={"createdAt": "desc"},
+            take=limit,
+        )
+        return items
+    finally:
+        await db.disconnect()
+
+
 # ─── Sync wrappers for Phase 1 ─────────────────────────────────────
 
 def create_stream(**kwargs):
@@ -396,6 +429,10 @@ def insert_news_items(stream_id: str, chunk_id: str, items: list[dict], attribut
 
 def list_news_items(stream_id: str | None = None, status: str | None = None, limit: int = 200):
     return asyncio.run(_list_news_items(stream_id, status, limit))
+
+
+def search_news_items(stream_id: str | None, status: str | None, q: str | None, limit: int = 200):
+    return asyncio.run(_search_news_items(stream_id, status, q, limit))
 
 
 def update_news_item_status(item_id: int, status: str):

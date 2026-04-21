@@ -43,7 +43,7 @@ from main import process_url            # noqa: E402
 from store import (                     # noqa: E402
     create_news_image, create_stream, find_similar_image, get_all_settings,
     get_news_item, get_stream, get_video, increment_image_reuse, list_news_images,
-    list_news_items, list_stream_briefs, list_streams, set_settings,
+    list_news_items, list_stream_briefs, list_streams, search_news_items, set_settings,
     update_news_item_enrichment, update_news_item_status, update_stream_fields,
 )
 
@@ -695,9 +695,10 @@ async def read_stream_briefs(stream_id: str) -> list[dict]:
 async def list_items(
     stream_id: str | None = None,
     status: str | None = None,
+    q: str | None = None,
     limit: int = 200,
 ) -> list[dict]:
-    items = await asyncio.to_thread(list_news_items, stream_id, status, limit)
+    items = await asyncio.to_thread(search_news_items, stream_id, status, q, limit)
     return [
         {
             "id": i.id,
