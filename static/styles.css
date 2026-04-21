@@ -282,49 +282,33 @@ input[type=checkbox], input[type=radio] { accent-color: var(--ink); }
   .vt-field { grid-template-columns: 1fr; gap: 8px; }
 }
 
-/* News tab — editorial feed (single column, separator between items) */
+/* News tab — single-column feed of cards (visual language matches stream cards) */
 .vt-news-grid {
   display: flex;
   flex-direction: column;
+  gap: 14px;
   max-width: 1100px;
   margin: 0 auto;
 }
-/* Collapse the base `.card` styling when it's a news-feed item —
-   strip border, background, rounded corners; replace with a thin
-   bottom divider between consecutive items. */
-.vt-news-grid .card.vt-news-card {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  border-bottom: 1px solid var(--line);
-  box-shadow: none;
-  padding: 22px 4px 20px;
+.vt-news-card {
+  padding: 22px 24px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   position: relative;
-  transition: background 120ms;
+  transition: border-color 120ms, box-shadow 120ms, transform 120ms;
 }
-.vt-news-grid .card.vt-news-card:last-child {
-  border-bottom: none;
-}
-.vt-news-grid .card.vt-news-card:hover {
-  background: color-mix(in oklch, var(--ink) 2.5%, transparent);
+.vt-news-card:hover {
+  border-color: var(--line-2);
+  box-shadow: 0 4px 12px -4px color-mix(in oklch, var(--ink) 8%, transparent);
 }
 /* Headline slightly bigger in feed layout */
 .vt-news-grid .vt-news-card > h3 {
   font-size: 24px !important;
   margin-bottom: 12px !important;
 }
-/* Quote: slightly airier left gutter */
 .vt-news-grid .vt-news-card > blockquote {
-  margin-left: 4px !important;
   font-size: 14.5px !important;
-}
-/* Footer: no top border — the item divider below already separates */
-.vt-news-grid .vt-news-card > .flex.items-center.gap-2\.5 {
-  border-top: none !important;
-  padding-top: 6px !important;
 }
 @media (min-width: 1400px) {
   .vt-news-grid { max-width: 1200px; }
