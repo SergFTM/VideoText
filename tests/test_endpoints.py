@@ -5,12 +5,10 @@ from server import app
 
 
 @pytest.mark.asyncio
-async def test_legacy_assistant_chat_still_reachable():
+async def test_legacy_assistant_chat_removed():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         r = await ac.post("/assistant/chat", json={"question": "x"})
-        # Route must be registered. Real execution may fail without LLM key —
-        # we only care that it's not a 404.
-        assert r.status_code != 404, f"legacy route removed prematurely: {r.status_code}"
+        assert r.status_code == 404, f"legacy alias should be gone, got {r.status_code}"
 
 
 @pytest.mark.asyncio

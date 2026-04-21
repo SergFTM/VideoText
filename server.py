@@ -931,7 +931,6 @@ class AssistantChatRequest(BaseModel):
 
 
 @app.post("/chat/platform")
-@app.post("/assistant/chat")  # legacy alias — remove in Phase 3
 async def chat_platform(req: AssistantChatRequest):
     """Platform persona chat — handles settings, integrations, errors."""
     from assistant.core.chat import Assistant
