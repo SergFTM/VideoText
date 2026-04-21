@@ -719,6 +719,15 @@ async def _update_news_item_enrichment(
         await db.disconnect()
 
 
+async def _get_news_image(image_id: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.newsimage.find_unique(where={"id": image_id})
+    finally:
+        await db.disconnect()
+
+
 async def _list_news_images(limit: int = 100):
     db = Prisma()
     await db.connect()
@@ -732,6 +741,10 @@ async def _list_news_images(limit: int = 100):
 
 def get_news_item(item_id: int):
     return asyncio.run(_get_news_item(item_id))
+
+
+def get_news_image(image_id: int):
+    return asyncio.run(_get_news_image(image_id))
 
 
 def find_similar_image(concept_embedding: list[float], threshold: float):

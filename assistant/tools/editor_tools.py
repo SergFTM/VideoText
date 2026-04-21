@@ -6,7 +6,9 @@ Actual DB writes happen in /chat/editor/apply after user clicks "apply".
 
 from __future__ import annotations
 import difflib
+import json as _json
 import os
+import re
 import uuid
 
 import store
@@ -61,7 +63,51 @@ def _diff(old: str, new: str) -> str:
 
 
 def recognize_text(image_id: int | None = None, url: str | None = None) -> dict:
-    return {"ok": True, "tool_call_id": str(uuid.uuid4()), "text": "(stub OCR output)"}
+    if not os.getenv("OPENAI_API_KEY"):
+        return {"ok": False, "error": "OCR requires OPENAI_API_KEY"}
+
+    image_payload: dict
+    if image_id is not None:
+        img = store.get_news_image(image_id)
+        if not img:
+            return {"ok": False, "error": f"NewsImage {image_id} not found"}
+        import base64
+        from pathlib import Path
+        try:
+            data = Path(img.filePath).read_bytes()
+        except (FileNotFoundError, OSError) as e:
+            return {"ok": False, "error": f"image file read failed: {e}"}
+        b64 = base64.b64encode(data).decode()
+        image_payload = {"url": f"data:image/png;base64,{b64}"}
+    elif url:
+        image_payload = {"url": url}
+    else:
+        return {"ok": False, "error": "Provide either image_id or url"}
+
+    from openai import OpenAI
+    client = OpenAI()
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Распознай весь видимый текст на изображении. Верни только текст, без комментариев. Если текста нет — верни пустую строку."},
+                    {"type": "image_url", "image_url": image_payload},
+                ],
+            }],
+            max_tokens=2000,
+        )
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    text = (resp.choices[0].message.content or "").strip()
+    return {
+        "ok": True,
+        "tool_call_id": str(uuid.uuid4()),
+        "text": text,
+        "length": len(text),
+    }
 
 
 def improve_headline(item_id: int, style: str = "", confirm: bool = False) -> dict:
@@ -175,25 +221,104 @@ def expand_text(item_id: int, length: str = "medium", confirm: bool = False) -> 
 
 
 def regenerate_image(item_id: int, concept: str = "", confirm: bool = False) -> dict:
+    item = store.get_news_item(item_id)
+    if not item:
+        return {"ok": False, "error": f"NewsItem {item_id} not found"}
+
+    if not concept:
+        system = (
+            "Ты — арт-директор. Дай КОРОТКУЮ концепт-фразу для иллюстрации "
+            "новости (2-5 слов, на английском, пригодное для DALL-E). "
+            "Только фраза, без пояснений."
+        )
+        user = f"Headline: {item.headline}\nQuote: {item.quote}"
+        try:
+            concept = _llm_rewrite(system, user, max_tokens=40).strip().strip('"').strip()[:80]
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    prompt = f"Editorial illustration: {concept}. Clean composition, news-style."
     return {
-        "ok": True, "tool_call_id": str(uuid.uuid4()),
-        "item_id": item_id, "field": "imageId",
-        "old": None, "new": f"(stub image for concept={concept})",
-        "diff": "(stub)",
+        "ok": True,
+        "tool_call_id": str(uuid.uuid4()),
+        "item_id": item_id,
+        "field": "imageId",
+        "old": item.imageId,
+        "new_concept": concept,
+        "new_prompt": prompt,
+        # Frontend passes `new_concept` to /apply when field==imageId; apply generates image.
+        "new": concept,  # simplified single-field preview for UI
+        "diff": f"concept: {concept}",
     }
 
 
 def suggest_tags(item_id: int) -> dict:
+    item = store.get_news_item(item_id)
+    if not item:
+        return {"ok": False, "error": f"NewsItem {item_id} not found"}
+
+    system = (
+        "Ты — теггер новостей. Предложи 1-5 коротких релевантных тегов "
+        "на русском (одно-два слова каждый). Отвечай ТОЛЬКО JSON-массивом "
+        'строк, например: ["энергетика","нефть","brent"]. '
+        "Никаких пояснений до или после."
+    )
+    user = f"Заголовок: {item.headline}\nЦитата: {item.quote}"
+    try:
+        raw = _llm_rewrite(system, user, max_tokens=100).strip()
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    # Parse JSON array. If LLM added prose, extract the first bracketed section.
+    tags: list[str] = []
+    try:
+        parsed = _json.loads(raw)
+        if isinstance(parsed, list):
+            tags = parsed
+    except _json.JSONDecodeError:
+        m = re.search(r"\[.*?\]", raw, re.DOTALL)
+        if m:
+            try:
+                tags = _json.loads(m.group(0))
+            except _json.JSONDecodeError:
+                tags = []
+    tags = [str(t).strip() for t in tags if str(t).strip()][:5]
+
     return {
-        "ok": True, "tool_call_id": str(uuid.uuid4()),
-        "item_id": item_id, "suggestions": ["stub-tag-1", "stub-tag-2"],
+        "ok": True,
+        "tool_call_id": str(uuid.uuid4()),
+        "item_id": item_id,
+        "field": "tags",
+        "old": _json.loads(item.tags) if item.tags else [],
+        "new": tags,
+        "diff": f"{len(tags)} tags suggested",
+        "suggestions": tags,  # back-compat with stub shape
     }
 
 
 def bulk_action(item_ids: list[int], action: str, confirm: bool = False) -> dict:
+    BULK_ALLOWED = {
+        "improve_headline": improve_headline,
+        "rewrite_quote": rewrite_quote,
+        "suggest_tags": suggest_tags,
+    }
+    if action not in BULK_ALLOWED:
+        return {
+            "ok": False,
+            "error": f"bulk action {action!r} not supported. allowed: {sorted(BULK_ALLOWED)}",
+        }
+
+    func = BULK_ALLOWED[action]
+    previews = []
+    for iid in item_ids[:50]:  # hard cap to avoid runaway cost
+        previews.append({"item_id": iid, "result": func(item_id=iid)})
+
     return {
-        "ok": True, "tool_call_id": str(uuid.uuid4()),
-        "action": action, "preview": [{"item_id": i, "change": "stub"} for i in item_ids],
+        "ok": True,
+        "tool_call_id": str(uuid.uuid4()),
+        "action": action,
+        "previews": previews,
+        "total": len(previews),
     }
 
 

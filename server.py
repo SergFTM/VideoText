@@ -1055,6 +1055,46 @@ class EditorApplyRequest(BaseModel):
 @app.post("/chat/editor/apply")
 async def chat_editor_apply(req: EditorApplyRequest):
     """Commit a previously-previewed edit to the news item."""
+    if req.field == "imageId":
+        # value is the concept phrase; actually generate + attach via enrich
+        concept = req.value if isinstance(req.value, str) else (req.value or {}).get("concept") or ""
+        if not concept:
+            raise HTTPException(400, "imageId apply requires concept string in value")
+        try:
+            from enrich import enrich_item
+            from store import (
+                create_news_image, find_similar_image, get_news_item,
+                increment_image_reuse, update_news_item_enrichment,
+            )
+            settings = await asyncio.to_thread(get_all_settings)
+            text_model   = str(settings.get("enrich_text_model", "gpt-4o-mini"))
+            image_model  = str(settings.get("enrich_image_model", "dall-e-3"))
+            image_source = str(settings.get("enrich_image_source", "hybrid"))
+            dedup_thr    = float(settings.get("enrich_image_dedup_threshold", 0.88))
+            embed_prov   = str(settings.get("dedup_embedding_provider", "fastembed"))
+            embed_model  = str(settings.get("dedup_embedding_model", ""))
+            item = await asyncio.to_thread(get_news_item, req.item_id)
+            if not item:
+                raise HTTPException(404, f"NewsItem {req.item_id} not found")
+            result = await asyncio.to_thread(
+                enrich_item, item,
+                text_model, image_model, image_source, dedup_thr,
+                embed_prov, embed_model,
+                find_similar_image, create_news_image, increment_image_reuse,
+                True,  # image_enabled
+            )
+            await asyncio.to_thread(
+                update_news_item_enrichment,
+                item.id, result.expanded_text, text_model,
+                result.expanded_usage.get("cost_usd", 0), result.image_id,
+            )
+            return {"ok": True, "item_id": req.item_id, "updated_field": "imageId", "image_id": result.image_id}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"{type(e).__name__}: {e}")
+
+    # Default path for headline/quote/expandedText/tags
     from store import apply_editor_change
     try:
         updated = await asyncio.to_thread(

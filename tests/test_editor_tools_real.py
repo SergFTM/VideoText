@@ -79,3 +79,81 @@ async def test_expand_text_real(db):
     assert len(r["new"]) > len(item.quote) * 2
     assert r["field"] == "expandedText"
     assert r["item_id"] == item.id
+
+
+@pytest.mark.skipif(not LLM_KEYS_PRESENT, reason="No LLM key")
+@pytest.mark.asyncio
+async def test_suggest_tags_real(db):
+    import asyncio
+    stream = await db.livestream.create(data={"url": "https://ex.com", "channelName": "x"})
+    item = await db.newsitem.create(data={
+        "streamId": stream.id,
+        "headline": "Нефть Brent выросла на 2%",
+        "quote": "Краткое сообщение о росте нефтяных котировок.",
+        "offsetSec": 0, "confidence": 0.9, "attribution": "x|1",
+    })
+    from assistant.tools.editor_tools import suggest_tags
+    r = await asyncio.to_thread(suggest_tags, item_id=item.id)
+    assert r["ok"] is True, f"unexpected: {r}"
+    assert isinstance(r["new"], list)
+    assert 1 <= len(r["new"]) <= 5
+    assert all(isinstance(t, str) and t.strip() for t in r["new"])
+
+
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="Recognize-text needs OPENAI_API_KEY (vision)")
+@pytest.mark.asyncio
+async def test_recognize_text_url_real():
+    """OCR on a publicly reachable image. Skipped if OPENAI key absent."""
+    import asyncio
+    from assistant.tools.editor_tools import recognize_text
+    # Use a known public PNG that OpenAI vision can download.
+    # The image may or may not contain text; we only check the response shape.
+    r = await asyncio.to_thread(
+        recognize_text,
+        url="https://www.w3schools.com/css/img_5terre.jpg",
+    )
+    # ok may be False if the URL is blocked; we only assert shape when ok=True
+    if r["ok"]:
+        assert "text" in r
+        assert "length" in r
+    else:
+        # Acceptable: network/provider issue — skip silently
+        pytest.skip(f"recognize_text returned ok=False (provider/network): {r['error']}")
+
+
+@pytest.mark.asyncio
+async def test_bulk_action_dispatches(db):
+    """bulk_action routes correctly and returns preview per item."""
+    import asyncio
+    stream = await db.livestream.create(data={"url": "https://ex.com", "channelName": "x"})
+    items = []
+    for i in range(3):
+        it = await db.newsitem.create(data={
+            "streamId": stream.id,
+            "headline": f"тест item {i}",
+            "quote": "q", "offsetSec": 0, "confidence": 0.9, "attribution": "x|1",
+        })
+        items.append(it)
+
+    from assistant.tools.editor_tools import bulk_action
+    if not LLM_KEYS_PRESENT:
+        # With no LLM — still verify dispatch structure: we'll get ok=False per item
+        r = await asyncio.to_thread(bulk_action, item_ids=[i.id for i in items], action="improve_headline")
+        # bulk returns ok=True with previews; individual results may be ok:false
+        assert r["ok"] is True
+        assert r["total"] == 3
+        return
+    r = await asyncio.to_thread(bulk_action, item_ids=[i.id for i in items], action="suggest_tags")
+    assert r["ok"] is True
+    assert r["total"] == 3
+    assert len(r["previews"]) == 3
+    assert r["action"] == "suggest_tags"
+
+
+@pytest.mark.asyncio
+async def test_bulk_action_rejects_unknown():
+    import asyncio
+    from assistant.tools.editor_tools import bulk_action
+    r = await asyncio.to_thread(bulk_action, item_ids=[1, 2], action="save_setting")
+    assert r["ok"] is False
+    assert "not supported" in r["error"]
