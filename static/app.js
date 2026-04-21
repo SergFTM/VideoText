@@ -30,6 +30,7 @@ function app() {
       { id: 'streams',  icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2"/><path d="M4.5 4.5a5 5 0 000 7M11.5 4.5a5 5 0 010 7M2 2a8 8 0 000 12M14 2a8 8 0 010 12"/></svg>' },
       { id: 'news',     icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 6h6M5 9h6M5 12h4"/></svg>' },
       { id: 'assistant',icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="4" width="12" height="9" rx="2"/><circle cx="6" cy="8.5" r="0.8" fill="currentColor"/><circle cx="10" cy="8.5" r="0.8" fill="currentColor"/><path d="M8 2v2"/></svg>' },
+      { id: 'editor',   icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 12l2-2 6-6 2 2-6 6-2 2z"/><path d="M11 3l2 2"/><path d="M3 13h10"/></svg>' },
       { id: 'settings', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M3 13l1.5-1.5M11.5 4.5L13 3"/></svg>' },
     ],
 

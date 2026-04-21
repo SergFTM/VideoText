@@ -517,3 +517,74 @@ input[type=checkbox], input[type=radio] { accent-color: var(--ink); }
   font-size: 12px;
   cursor: pointer;
 }
+
+/* AI Editor settings page */
+.editor-panel {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 4px;
+}
+
+.editor-panel h3 {
+  margin: 0 0 10px 0;
+}
+
+.editor-history-box {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.editor-history-row {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border, #3a3a3a);
+}
+
+.editor-history-row:last-child {
+  border-bottom: none;
+}
+
+.editor-history-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.editor-history-meta {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.editor-defaults-box .editor-default-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.editor-defaults-box label {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.editor-defaults-box input,
+.editor-defaults-box select {
+  padding: 4px 6px;
+  font-size: 13px;
+  background: var(--input-bg, #222);
+  color: var(--input-fg, #e6e6e6);
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 3px;
+}
+
+.editor-defaults-box button {
+  margin-top: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.editor-save-hint {
+  font-size: 12px;
+  opacity: 0.8;
+  margin-top: 6px;
+  min-height: 18px;
+}

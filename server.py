@@ -1163,6 +1163,30 @@ async def assistant_list_sessions(limit: int = 50):
         await db.disconnect()
 
 
+@app.get("/chat/{persona}/sessions")
+async def chat_sessions(persona: Literal["platform", "editor"], limit: int = 50):
+    """List chat sessions for a given persona (sidebar history)."""
+    db = Prisma()
+    await db.connect()
+    try:
+        sess = await db.assistantsession.find_many(
+            where={"persona": persona},
+            order={"updatedAt": "desc"},
+            take=limit,
+            include={"messages": {"take": 1, "order_by": {"createdAt": "asc"}}},
+        )
+        return [
+            {
+                "id": s.id,
+                "title": s.title or (s.messages[0].content[:60] if s.messages else "Без темы"),
+                "updated_at": s.updatedAt.isoformat(),
+            }
+            for s in sess
+        ]
+    finally:
+        await db.disconnect()
+
+
 @app.get("/assistant/sessions/{session_id}")
 async def assistant_get_session(session_id: str):
     db = Prisma()
