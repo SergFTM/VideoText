@@ -58,3 +58,24 @@ async def test_rewrite_quote_real(db):
     assert len(r["new"]) > 20
     assert r["field"] == "quote"
     assert r["item_id"] == item.id
+
+
+@pytest.mark.skipif(not LLM_KEYS_PRESENT, reason="No LLM key")
+@pytest.mark.asyncio
+async def test_expand_text_real(db):
+    import asyncio
+    stream = await db.livestream.create(data={
+        "url": "https://ex.com", "channelName": "x",
+    })
+    item = await db.newsitem.create(data={
+        "streamId": stream.id,
+        "headline": "ФРС оставила ставку без изменений",
+        "quote": "Федрезерв США сохранил диапазон ставки на уровне 5.25-5.5%.",
+        "offsetSec": 0, "confidence": 0.95, "attribution": "x|1",
+    })
+    from assistant.tools.editor_tools import expand_text
+    r = await asyncio.to_thread(expand_text, item_id=item.id, length="medium")
+    assert r["ok"] is True, f"unexpected: {r}"
+    assert len(r["new"]) > len(item.quote) * 2
+    assert r["field"] == "expandedText"
+    assert r["item_id"] == item.id

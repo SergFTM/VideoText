@@ -134,8 +134,44 @@ def rewrite_quote(item_id: int, tone: str = "", confirm: bool = False) -> dict:
     }
 
 
+_LENGTH_TARGETS = {"short": (150, 300), "medium": (400, 700), "long": (900, 1400)}
+
+
 def expand_text(item_id: int, length: str = "medium", confirm: bool = False) -> dict:
-    return _stub_rewrite(item_id, "expandedText", f"[len={length}]")
+    item = store.get_news_item(item_id)
+    if not item:
+        return {"ok": False, "error": f"NewsItem {item_id} not found"}
+
+    min_chars, max_chars = _LENGTH_TARGETS.get(length, (400, 700))
+    old = item.expandedText or ""
+    system = (
+        f"Ты пишешь расширенную версию новостной заметки на русском. "
+        f"Длина: {min_chars}-{max_chars} символов. Не выдумывай факты — "
+        f"используй только данные из заголовка и цитаты. Объясни контекст, "
+        f"добавь фон, избегай клише. Markdown НЕ использовать — простой текст."
+    )
+    user = (
+        f"Заголовок: {item.headline}\n"
+        f"Цитата: {item.quote}\n"
+        f"Категория: {item.category or '—'}\n"
+        f"Атрибуция: {item.attribution}\n"
+        f"Расширенный текст:"
+    )
+    try:
+        new = _llm_rewrite(system, user, max_tokens=max(800, max_chars // 2))
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    new = new.strip()
+
+    return {
+        "ok": True,
+        "tool_call_id": str(uuid.uuid4()),
+        "item_id": item_id,
+        "field": "expandedText",
+        "old": old,
+        "new": new,
+        "diff": _diff(old, new),
+    }
 
 
 def regenerate_image(item_id: int, concept: str = "", confirm: bool = False) -> dict:
