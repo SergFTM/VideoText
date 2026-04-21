@@ -286,7 +286,7 @@ input[type=checkbox], input[type=radio] { accent-color: var(--ink); }
 .vt-news-grid {
   display: flex;
   flex-direction: column;
-  max-width: 820px;
+  max-width: 1100px;
   margin: 0 auto;
 }
 /* Collapse the base `.card` styling when it's a news-feed item —
@@ -326,8 +326,8 @@ input[type=checkbox], input[type=radio] { accent-color: var(--ink); }
   border-top: none !important;
   padding-top: 6px !important;
 }
-@media (min-width: 1100px) {
-  .vt-news-grid { max-width: 860px; }
+@media (min-width: 1400px) {
+  .vt-news-grid { max-width: 1200px; }
 }
 
 /* Streams tab — active stream card layout: info | sparkline | counters | actions */
