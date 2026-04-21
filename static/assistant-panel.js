@@ -120,7 +120,7 @@ function assistantPanel() {
       this.messages.push(assistantMsg);
 
       try {
-        const resp = await fetch('/assistant/chat', {
+        const resp = await fetch('/chat/platform', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ question, ui_context: ui_ctx, auto_confirm: !!this.settings.assistant_auto_confirm_writes }),
