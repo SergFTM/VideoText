@@ -5,8 +5,11 @@ Actual DB writes happen in /chat/editor/apply after user clicks "apply".
 """
 
 from __future__ import annotations
+import difflib
+import os
 import uuid
 
+import store
 from .base import ToolDef
 
 
@@ -22,12 +25,79 @@ def _stub_rewrite(item_id: int, field: str, marker: str) -> dict:
     }
 
 
+def _llm_rewrite(system: str, user: str, max_tokens: int = 200) -> str:
+    """Try Claude Haiku first, fall back to gpt-4o-mini. Returns raw text."""
+    if os.getenv("ANTHROPIC_API_KEY"):
+        import anthropic
+        client = anthropic.Anthropic()
+        msg = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        return "".join(b.text for b in msg.content if b.type == "text").strip()
+    if os.getenv("OPENAI_API_KEY"):
+        from openai import OpenAI
+        client = OpenAI()
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=max_tokens,
+        )
+        return resp.choices[0].message.content.strip()
+    raise RuntimeError("no LLM key available (need ANTHROPIC_API_KEY or OPENAI_API_KEY)")
+
+
+def _diff(old: str, new: str) -> str:
+    return "\n".join(difflib.unified_diff(
+        (old or "").splitlines() or [""],
+        (new or "").splitlines() or [""],
+        fromfile="before", tofile="after", lineterm="",
+    ))
+
+
 def recognize_text(image_id: int | None = None, url: str | None = None) -> dict:
     return {"ok": True, "tool_call_id": str(uuid.uuid4()), "text": "(stub OCR output)"}
 
 
 def improve_headline(item_id: int, style: str = "", confirm: bool = False) -> dict:
-    return _stub_rewrite(item_id, "headline", f"[style={style}]")
+    item = store.get_news_item(item_id)
+    if not item:
+        return {"ok": False, "error": f"NewsItem {item_id} not found"}
+
+    old = item.headline or ""
+    system = (
+        "Ты — редактор новостных заголовков на русском языке. "
+        "Перепиши данный заголовок, сохраняя фактическую суть. "
+        "Не меняй имена, цифры, названия. Отдай ТОЛЬКО новый заголовок, "
+        "без кавычек, без пояснений. Одна строка."
+    )
+    user = f"Текущий заголовок: {old}\n"
+    if style:
+        user += f"Желаемый стиль: {style}\n"
+    user += "Новый заголовок:"
+
+    try:
+        new = _llm_rewrite(system, user)
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    # Strip surrounding quotes the model sometimes adds
+    new = new.strip().strip('"').strip("«»").strip()
+
+    return {
+        "ok": True,
+        "tool_call_id": str(uuid.uuid4()),
+        "item_id": item_id,
+        "field": "headline",
+        "old": old,
+        "new": new,
+        "diff": _diff(old, new),
+    }
 
 
 def rewrite_quote(item_id: int, tone: str = "", confirm: bool = False) -> dict:

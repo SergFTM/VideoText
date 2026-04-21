@@ -24,8 +24,11 @@ async def test_preview_does_not_mutate_db(db):
         "attribution": "test | 2026-01-01",
     })
 
+    import asyncio
     from assistant.tools.editor_tools import improve_headline
-    preview = improve_headline(item_id=item.id, style="shorter")
+    # improve_headline is sync but calls store.get_news_item which uses asyncio.run().
+    # Run in a thread to avoid "cannot be called from a running event loop" error.
+    preview = await asyncio.to_thread(improve_headline, item_id=item.id, style="shorter")
     assert preview["ok"] is True
     assert "new" in preview
 
