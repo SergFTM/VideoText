@@ -79,6 +79,7 @@
   <script src="/static/assistant-panel.js?v=7"></script>
   <script src="/static/assistant-tab.js?v=7"></script>
   <script src="/static/app.js?v=7"></script>
+  <script src="/static/editor-inline.js"></script>
 </head>
 <body class="font-sans bg-bg text-ink antialiased" :lang="lang">
 <a href="#main-content" class="sr-skip" x-text="t('a11y.skip_to_content')">К содержимому</a>
@@ -979,7 +980,7 @@
       <!-- Cards: 2-column compact -->
       <div x-show="visibleDraftNews.length > 0" class="vt-news-grid">
         <template x-for="item in visibleDraftNews" :key="item.id">
-          <article class="card vt-news-card" :style="item.duplicate_of_id ? 'opacity: 0.65;' : ''" @click="openNewsDetail(item.id)">
+          <article class="card vt-news-card" :style="item.duplicate_of_id ? 'opacity: 0.65;' : ''" data-news-card @click="openNewsDetail(item.id)">
             <!-- Top meta -->
             <div class="flex items-center gap-2 mb-2 flex-wrap" style="font-size: 11px;">
               <span x-show="item.category" class="chip" :style="categoryChipStyle(item.category)">
@@ -1027,6 +1028,7 @@
                 ✓ <span x-text="t('btn.approve').toLowerCase()"></span>
               </button>
             </div>
+            <div class="editor-actions-slot" :data-item-id="item.id"></div>
           </article>
         </template>
       </div>
@@ -1292,7 +1294,7 @@
     <!-- Cards grid: 2 columns, editorial style with category accent -->
     <div x-show="visibleNews.length > 0" class="vt-news-grid">
       <template x-for="item in visibleNews" :key="item.id">
-        <article class="card vt-news-card" @click="openNewsDetail(item.id)">
+        <article class="card vt-news-card" data-news-card @click="openNewsDetail(item.id)">
           <!-- Top meta row -->
           <div class="flex items-center gap-2 mb-2.5 flex-wrap" style="font-size: 11px;">
             <span class="chip" :style="categoryChipStyle(item.category)" x-show="item.category">
@@ -1352,6 +1354,7 @@
               </div>
             </template>
           </div>
+          <div class="editor-actions-slot" :data-item-id="item.id"></div>
         </article>
       </template>
     </div>
