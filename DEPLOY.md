@@ -161,3 +161,37 @@ del prisma\videotext.db
 rmdir /s /q chunks output images
 # После рестарта prisma db push заново создаст пустую БД.
 ```
+
+## AI-компоненты — AI Assistant vs AI Editor
+
+VideoText содержит два AI-блока с разными зонами ответственности:
+
+| Блок | Роль | UI |
+|---|---|---|
+| **AI Assistant** | настройки платформы, разбор ошибок, интеграции | плавающая панель (правый нижний угол) |
+| **AI Editor** | улучшение заголовков/цитат, генерация иллюстраций, распознавание текста | inline-кнопки на карточке news item + меню "AI Editor" |
+
+### Endpoints
+
+- `POST /chat/platform` — AI Assistant SSE-стрим
+- `POST /chat/editor` + `POST /chat/editor/apply` — AI Editor preview→apply
+- `GET  /chat/{persona}/sessions` — история чатов для персоны
+
+Легаси `POST /assistant/chat` удалён. Если у тебя есть внешние интеграции
+которые ходят по старому URL — переключи их на `/chat/platform`.
+
+### Ключи и настройки
+
+Оба блока используют общие настройки провайдера (`assistant_provider`,
+`assistant_model`). Требуется минимум один из:
+- `ANTHROPIC_API_KEY` — Claude (Sonnet / Haiku)
+- `OPENAI_API_KEY`    — GPT (и vision для OCR)
+- локальный Ollama     — через `OLLAMA_URL`
+
+### Доп.требования для Editor
+
+- `OPENAI_API_KEY` нужен для OCR-tool (`recognize_text` — gpt-4o-mini vision).
+- `OPENAI_API_KEY` или Pexels-ключ нужен для `regenerate_image`.
+- Write-tools возвращают preview (`improve_headline`, `rewrite_quote`, `expand_text`,
+  `suggest_tags`, `regenerate_image`, `bulk_action`); фактическая запись — через
+  `/chat/editor/apply` после подтверждения в UI.
