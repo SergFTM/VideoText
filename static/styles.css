@@ -282,13 +282,13 @@ input[type=checkbox], input[type=radio] { accent-color: var(--ink); }
   .vt-field { grid-template-columns: 1fr; gap: 8px; }
 }
 
-/* News tab — single-column feed of cards (visual language matches stream cards) */
+/* News tab — single-column feed of cards (visual language + width matches stream cards) */
 .vt-news-grid {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-width: 1100px;
-  margin: 0 auto;
+  /* No max-width — stretch to the main content container (1280px minus padding),
+     so news cards line up with stream cards above. */
 }
 .vt-news-card {
   padding: 22px 24px;
@@ -309,9 +309,6 @@ input[type=checkbox], input[type=radio] { accent-color: var(--ink); }
 }
 .vt-news-grid .vt-news-card > blockquote {
   font-size: 14.5px !important;
-}
-@media (min-width: 1400px) {
-  .vt-news-grid { max-width: 1200px; }
 }
 
 /* Streams tab — active stream card layout: info | sparkline | counters | actions */
