@@ -187,7 +187,7 @@ class Assistant:
                 return
 
         # 2. Build cherry-picked context
-        ctx_text = await build_context(db, question, ui_context=ui_context)
+        ctx_text = await build_context(db, question, persona=self.persona, ui_context=ui_context)
         yield {"type": "context", "chars": len(ctx_text)}
 
         base_prompt = (self.persona.system_prompt if self.persona else SYSTEM_PROMPT_BASE)

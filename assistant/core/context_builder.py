@@ -178,16 +178,25 @@ async def build_context(
     db: Prisma,
     question: str,
     *,
+    persona=None,
     ui_context: dict | None = None,
 ) -> str:
     """Build the system-prompt context block for a given question.
 
-    `ui_context` optional dict from the frontend — {tab, selected_id, error_visible}.
+    `persona` optional persona object — when supplied, sections are gated by
+    `persona.kb_source_keys`.  When None (legacy callers), all sections are
+    included (backward-compat).
+
+    `ui_context` optional dict from the frontend — {tab, selected_id, error_visible,
+    item_id, stream_id}.
     """
     q_tokens = tokenize(question)
     sections: list[str] = []
 
-    # 1. UI context (what is the user looking at right now)
+    # Compute gating set — None means "no filter" (full context, legacy behaviour)
+    kb_keys: set[str] | None = set(persona.kb_source_keys) if persona is not None else None
+
+    # ── Section 1: UI context — always include ────────────────────────
     if ui_context:
         ui_lines = []
         if ui_context.get("tab"):
@@ -199,50 +208,87 @@ async def build_context(
         if ui_lines:
             sections.append("## Контекст UI\n" + "\n".join(ui_lines))
 
-    # 2. Always-in: settings + key status
-    sections.append("## Состояние системы\n" + await _settings_snapshot_text(db))
+    # ── Section 2: Settings snapshot — gated by "settings_db" ────────
+    if kb_keys is None or "settings_db" in kb_keys:
+        sections.append("## Состояние системы\n" + await _settings_snapshot_text(db))
 
-    # 3. Direct error-pattern hits (regex over errors.yaml)
-    err_hits = _match_error_patterns(question)
-    if err_hits:
-        lines = ["## Прямое совпадение с каталогом ошибок"]
-        for err in err_hits[:3]:
-            lines.append(f"### {err.get('title_ru') or err['id']} [{err.get('category', '')}]")
-            lines.extend(f"- {s}" for s in err.get("fix_steps", []))
-            if err.get("auto_fix"):
-                lines.append(f"Auto-fix: `{err['auto_fix']}`")
-            if err.get("docs_url"):
-                lines.append(f"Docs: {err['docs_url']}")
-        sections.append("\n".join(lines))
+    # ── Section 3: Error-pattern hits — gated by "platform_docs" ─────
+    if kb_keys is None or "platform_docs" in kb_keys:
+        err_hits = _match_error_patterns(question)
+        if err_hits:
+            lines = ["## Прямое совпадение с каталогом ошибок"]
+            for err in err_hits[:3]:
+                lines.append(f"### {err.get('title_ru') or err['id']} [{err.get('category', '')}]")
+                lines.extend(f"- {s}" for s in err.get("fix_steps", []))
+                if err.get("auto_fix"):
+                    lines.append(f"Auto-fix: `{err['auto_fix']}`")
+                if err.get("docs_url"):
+                    lines.append(f"Docs: {err['docs_url']}")
+            sections.append("\n".join(lines))
 
-    # 4. Score KB chunks
-    kb_entries = await load_kb(db)
-    if kb_entries and q_tokens:
-        scored = [
-            (
-                score_kb_chunk(
-                    q_tokens, e["tokens"], kind=e["kind"],
-                    title_tokens=tokenize(e["title"]),
-                ),
-                e,
+    # ── Section 4: KB chunks — gated by project_docs / saved_kb / platform_docs
+    _kb_allowed = kb_keys is None or bool(
+        kb_keys & {"project_docs", "saved_kb", "platform_docs"}
+    )
+    if _kb_allowed:
+        kb_entries = await load_kb(db)
+        if kb_entries and q_tokens:
+            scored = [
+                (
+                    score_kb_chunk(
+                        q_tokens, e["tokens"], kind=e["kind"],
+                        title_tokens=tokenize(e["title"]),
+                    ),
+                    e,
+                )
+                for e in kb_entries
+            ]
+            scored.sort(key=lambda x: x[0], reverse=True)
+            top_kb = [e for score, e in scored[:MAX_KB_CHUNKS] if score > 0.05]
+            if top_kb:
+                lines = ["## Релевантные разделы knowledge base"]
+                for e in top_kb:
+                    body = e["body"][:MAX_BODY_CHARS]
+                    if len(e["body"]) > MAX_BODY_CHARS:
+                        body += "…"
+                    lines.append(f"### [{e['kind']}] {e['title']}\n{body}")
+                sections.append("\n".join(lines))
+
+    # ── Section 5: content_db — specific item + stream ledger ─────────
+    if kb_keys is not None and "content_db" in kb_keys:
+        if ui_context and ui_context.get("item_id"):
+            item = await db.newsitem.find_unique(where={"id": ui_context["item_id"]})
+            if item:
+                sections.append(
+                    f"## Текущая карточка\n"
+                    f"- ID: #{item.id}\n"
+                    f"- Заголовок: {item.headline}\n"
+                    f"- Цитата: {item.quote}\n"
+                    f"- Атрибуция: {item.attribution}\n"
+                    f"- Теги: {item.tags}\n"
+                )
+
+        if ui_context and ui_context.get("stream_id"):
+            recent = await db.newsitem.find_many(
+                where={"streamId": ui_context["stream_id"]},
+                order={"createdAt": "desc"},
+                take=10,
             )
-            for e in kb_entries
-        ]
-        scored.sort(key=lambda x: x[0], reverse=True)
-        top_kb = [e for score, e in scored[:MAX_KB_CHUNKS] if score > 0.05]
-        if top_kb:
-            lines = ["## Релевантные разделы knowledge base"]
-            for e in top_kb:
-                body = e["body"][:MAX_BODY_CHARS]
-                if len(e["body"]) > MAX_BODY_CHARS:
-                    body += "…"
-                lines.append(f"### [{e['kind']}] {e['title']}\n{body}")
-            sections.append("\n\n".join(lines) if False else "\n".join(lines))
+            if recent:
+                lines = ["## Последние items в стриме"]
+                for n in recent:
+                    lines.append(f"- #{n.id} {n.headline}")
+                sections.append("\n".join(lines))
 
-    # 5. Live DB — score recent items
-    news = await _recent_news(db)
-    streams = await _active_streams(db)
-    errors = await _recent_errors(db)
+    # ── Section 5 (legacy / platform path): Live DB scored items ──────
+    # For each sub-kind respect kb_keys gating; when persona=None include all.
+    _news_allowed   = kb_keys is None or "content_db" in kb_keys
+    _streams_allowed = kb_keys is None or "settings_db" in kb_keys
+    _errors_allowed  = kb_keys is None or "settings_db" in kb_keys
+
+    news    = await _recent_news(db)    if _news_allowed    else []
+    streams = await _active_streams(db) if _streams_allowed else []
+    errors  = await _recent_errors(db)  if _errors_allowed  else []
 
     all_items = news + streams + errors
     if all_items and q_tokens:
