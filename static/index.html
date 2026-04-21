@@ -79,7 +79,7 @@
   <script src="/static/assistant-panel.js?v=7"></script>
   <script src="/static/app.js?v=7"></script>
   <script src="/static/editor-inline.js"></script>
-  <script src="/static/editor-settings.js"></script>
+  <script src="/static/editor-workspace.js?v=1"></script>
 </head>
 <body class="font-sans bg-bg text-ink antialiased" :lang="lang">
 <a href="#main-content" class="sr-skip" x-text="t('a11y.skip_to_content')">К содержимому</a>
@@ -1364,33 +1364,120 @@
 
 
 <!-- ═══════════════════════════════════════════════════════════ -->
-<!-- TAB: AI EDITOR (settings page — history + defaults) ──────── -->
+<!-- TAB: AI EDITOR — workspace (items list + selected item editor) -->
 <!-- ═══════════════════════════════════════════════════════════ -->
-<div id="editor-section" x-show="activeView === 'editor'" x-cloak class="space-y-12 fade-in">
+<div id="editor-section" x-show="activeView === 'editor'" x-cloak class="fade-in">
 
-  <!-- Editorial header -->
-  <header style="margin-bottom: 28px;">
+  <header style="margin-bottom: 20px;">
     <div class="label" style="color: var(--acc);">AI Editor</div>
-    <h1 class="serif" style="font-size: 48px; line-height: 1.05; margin: 10px 0 6px; letter-spacing: -0.02em;">
+    <h1 class="serif" style="font-size: 40px; line-height: 1.05; margin: 8px 0 4px; letter-spacing: -0.02em;">
       AI <span style="font-style: italic; color: var(--acc);">Editor</span>
     </h1>
-    <p style="color: var(--mute); font-size: 15px; max-width: 640px; margin: 0;">История правок и настройки по умолчанию</p>
+    <p style="color: var(--mute); font-size: 14px; margin: 0;">Рабочее место для редактирования news items с AI-assist.</p>
   </header>
 
-  <div class="editor-panel">
-    <h3>История правок</h3>
-    <div id="editor-actions-history" class="editor-history-box">
-      <em>Загружаю…</em>
-    </div>
-  </div>
+  <div class="editor-workspace">
 
-  <div class="editor-panel">
-    <h3>Настройки по умолчанию</h3>
-    <div id="editor-defaults" class="editor-defaults-box">
-      <em>Загружаю…</em>
-    </div>
-  </div>
+    <!-- LEFT COLUMN: filters + items list -->
+    <aside class="editor-workspace-left">
+      <div class="editor-filters">
+        <label>
+          <span class="editor-filter-label">Статус</span>
+          <select id="editor-filter-status">
+            <option value="">все</option>
+            <option value="draft">draft</option>
+            <option value="approved">approved</option>
+            <option value="rejected">rejected</option>
+            <option value="exported">exported</option>
+          </select>
+        </label>
+        <label>
+          <span class="editor-filter-label">Стрим</span>
+          <select id="editor-filter-stream">
+            <option value="">все</option>
+          </select>
+        </label>
+        <label>
+          <span class="editor-filter-label">Поиск</span>
+          <input id="editor-filter-q" type="search" placeholder="в заголовке или цитате" />
+        </label>
+      </div>
 
+      <div class="editor-items-meta" id="editor-items-meta">—</div>
+      <div class="editor-items-list" id="editor-items-list">
+        <em>Загружаю…</em>
+      </div>
+    </aside>
+
+    <!-- RIGHT COLUMN: selected item workspace -->
+    <section class="editor-workspace-right" id="editor-workspace-right">
+      <div class="editor-empty" id="editor-empty">
+        ← Выбери карточку слева
+      </div>
+
+      <div class="editor-item" id="editor-item" style="display: none;">
+        <div class="editor-item-header">
+          <h2 id="editor-item-title">Item #…</h2>
+          <span class="editor-item-status" id="editor-item-status"></span>
+        </div>
+
+        <div class="editor-item-body">
+          <div class="editor-field"><div class="editor-field-label">Заголовок</div><div class="editor-field-value" id="editor-field-headline"></div></div>
+          <div class="editor-field"><div class="editor-field-label">Цитата</div><div class="editor-field-value" id="editor-field-quote"></div></div>
+          <div class="editor-field"><div class="editor-field-label">Расширенный текст</div><div class="editor-field-value" id="editor-field-expanded"><em>(не сгенерирован)</em></div></div>
+          <div class="editor-field-row">
+            <div class="editor-field"><div class="editor-field-label">Теги</div><div class="editor-field-value" id="editor-field-tags"></div></div>
+            <div class="editor-field"><div class="editor-field-label">Attribution</div><div class="editor-field-value" id="editor-field-attrib"></div></div>
+          </div>
+          <div class="editor-field-row">
+            <div class="editor-field"><div class="editor-field-label">Категория</div><div class="editor-field-value" id="editor-field-category"></div></div>
+            <div class="editor-field"><div class="editor-field-label">Confidence</div><div class="editor-field-value" id="editor-field-confidence"></div></div>
+          </div>
+          <div class="editor-field" id="editor-field-image-wrap" style="display: none;">
+            <div class="editor-field-label">Иллюстрация</div>
+            <img id="editor-field-image" class="editor-image-thumb" alt="" />
+            <div class="editor-field-value" id="editor-field-image-concept"></div>
+          </div>
+        </div>
+
+        <div class="editor-tz">
+          <label for="editor-tz-input" class="editor-field-label">Контекст ТЗ</label>
+          <textarea id="editor-tz-input" rows="3" placeholder="напр.: «переписать под деловой тон, убрать кликбейт»"></textarea>
+          <div class="editor-tz-hint">Подставляется в параметр style/tone соответствующих AI-тулзов.</div>
+        </div>
+
+        <div class="editor-actions-bar">
+          <button type="button" data-tool="improve_headline">✨ Заголовок</button>
+          <button type="button" data-tool="rewrite_quote">✍ Цитата</button>
+          <button type="button" data-tool="expand_text">📝 Расширить</button>
+          <button type="button" data-tool="suggest_tags">🏷 Теги</button>
+          <button type="button" data-tool="regenerate_image">🖼 Картинка</button>
+        </div>
+
+        <div class="editor-preview-container" id="editor-preview-container"></div>
+
+        <details class="editor-collapse">
+          <summary>История правок по этому итему</summary>
+          <div class="editor-item-history" id="editor-item-history">—</div>
+        </details>
+
+        <details class="editor-collapse">
+          <summary>История всех сессий AI Editor</summary>
+          <div id="editor-actions-history" class="editor-history-box">
+            <em>Загружаю…</em>
+          </div>
+        </details>
+
+        <details class="editor-collapse">
+          <summary>Настройки редактора по умолчанию</summary>
+          <div id="editor-defaults" class="editor-defaults-box">
+            <em>Загружаю…</em>
+          </div>
+        </details>
+      </div>
+    </section>
+
+  </div>
 </div><!-- /TAB: AI EDITOR -->
 
 <!-- ═══════════════════════════════════════════════════════════ -->
