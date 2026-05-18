@@ -115,3 +115,102 @@ def news_items_to_pdf(items: list[dict], title: str = "VideoText — News digest
 
 def _xml_escape(s: str) -> str:
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ─── Markdown → PDF (used by /videos/{id}/expansions/{mode}.pdf) ────
+
+# Markdown rendering here is intentionally minimal: heading levels, bullet
+# lists, blockquotes, horizontal rules, inline **bold** and *italic*. We avoid
+# pulling in markdown2/mistune to keep the import surface small — these few
+# constructs cover everything our local-LLM prompts produce.
+
+import re as _re
+
+
+def _inline_md(text: str) -> str:
+    """Convert **bold**, *italic*, `code`, links to ReportLab inline tags."""
+    s = _xml_escape(text)
+    # Code spans: `foo` → <font name=Courier>foo</font>
+    s = _re.sub(r"`([^`]+)`", r'<font name="Courier">\1</font>', s)
+    # Bold: **foo** → <b>foo</b>
+    s = _re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", s)
+    # Italic: *foo* (single asterisk, not part of bold)
+    s = _re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<i>\1</i>", s)
+    # Markdown links [text](url) → text (url)
+    s = _re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", s)
+    return s
+
+
+def markdown_to_pdf(md_text: str, title: str) -> bytes:
+    """Render a small-subset markdown string to a PDF byte stream.
+
+    Used for exporting local-LLM expansions (research/report) to PDF — for ТЗ
+    we still ship .md because it's expected to be fed back into Cursor/Claude.
+    """
+    font = _register_cyrillic_font()
+    bold_font = "ArialBold" if "ArialBold" in pdfmetrics.getRegisteredFontNames() else font
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=2 * cm, rightMargin=2 * cm,
+        topMargin=2 * cm, bottomMargin=2 * cm,
+        title=title,
+    )
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("H1", parent=styles["Heading1"], fontName=bold_font,
+                        fontSize=18, leading=22, spaceBefore=12, spaceAfter=8)
+    h2 = ParagraphStyle("H2", parent=styles["Heading2"], fontName=bold_font,
+                        fontSize=14, leading=18, spaceBefore=10, spaceAfter=6)
+    h3 = ParagraphStyle("H3", parent=styles["Heading3"], fontName=bold_font,
+                        fontSize=12, leading=16, spaceBefore=8, spaceAfter=4)
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontName=font,
+                          fontSize=10, leading=14, spaceAfter=4)
+    bullet = ParagraphStyle("bullet", parent=body,
+                            leftIndent=14, bulletIndent=2, spaceAfter=2)
+    quote = ParagraphStyle("quote", parent=body,
+                           leftIndent=14, textColor=colors.HexColor("#444444"),
+                           fontName=font, spaceAfter=4)
+    muted = ParagraphStyle("muted", parent=body, fontName=font,
+                           fontSize=8, leading=10, textColor=colors.grey, spaceAfter=2)
+
+    story: list = [
+        Paragraph(_xml_escape(title), h1),
+        Paragraph(f"Сгенерировано: {datetime.now().strftime('%Y-%m-%d %H:%M')}", muted),
+        Spacer(1, 8),
+    ]
+
+    for raw_line in (md_text or "").splitlines():
+        line = raw_line.rstrip()
+        if not line.strip():
+            story.append(Spacer(1, 4))
+            continue
+        # Headings
+        m = _re.match(r"^(#{1,3})\s+(.+)$", line)
+        if m:
+            level = len(m.group(1))
+            text = _inline_md(m.group(2))
+            story.append(Paragraph(text, {1: h1, 2: h2, 3: h3}[level]))
+            continue
+        # Horizontal rule
+        if _re.match(r"^[-*_]{3,}\s*$", line):
+            story.append(Spacer(1, 6))
+            continue
+        # Bullet list
+        m = _re.match(r"^\s*[-*•]\s+(.+)$", line)
+        if m:
+            story.append(Paragraph("• " + _inline_md(m.group(1)), bullet))
+            continue
+        # Numbered list
+        m = _re.match(r"^\s*(\d+)[.)]\s+(.+)$", line)
+        if m:
+            story.append(Paragraph(f"{m.group(1)}. " + _inline_md(m.group(2)), bullet))
+            continue
+        # Blockquote
+        if line.startswith("> "):
+            story.append(Paragraph(_inline_md(line[2:]), quote))
+            continue
+        # Plain paragraph
+        story.append(Paragraph(_inline_md(line), body))
+
+    doc.build(story)
+    return buf.getvalue()

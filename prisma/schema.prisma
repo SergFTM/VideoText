@@ -25,9 +25,31 @@ model Video {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  segments Segment[]
-  briefs   Brief[]
-  runs     Run[]
+  segments   Segment[]
+  briefs     Brief[]
+  runs       Run[]
+  expansions Expansion[]
+}
+
+// Local-LLM-generated expansions of brief sections: ТЗ, ресерч, репорт.
+// Unique on (videoId, mode) — re-running the same mode UPSERTs the row.
+model Expansion {
+  id            Int      @id @default(autoincrement())
+  videoId       String
+  video         Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  mode          String   // "spec" | "research" | "report"
+  sourceTitle   String   // heading the user clicked ("Черновик ТЗ", "Суть", ...)
+  sourceMd      String   // body of the source section at the time of expansion
+  contextMode   String   // "brief" | "transcript" | "both"
+  model         String   // ollama model tag, e.g. "qwen2.5:7b"
+  numCtx        Int      @default(8192)
+  contentMd     String   // the expanded text returned by the model
+  inputChars    Int      @default(0) // size of the user message sent to ollama
+  elapsedMs     Int      @default(0) // wall-clock generation time
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([videoId, mode])
 }
 
 model Segment {

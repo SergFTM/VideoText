@@ -203,6 +203,12 @@ input[type=checkbox], input[type=radio] { accent-color: var(--ink); }
   display: flex; align-items: center; justify-content: center;
 }
 
+/* Generic opacity pulse for activity indicators (uses currentColor, no theme tie-in) */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
 /* Pulsing live-stream dot */
 @keyframes pulseDot {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--bad) 40%, transparent); }

@@ -30,7 +30,7 @@ from typing import Any, Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, HttpUrl
 
@@ -42,9 +42,10 @@ from export import news_items_to_json, news_items_to_pdf  # noqa: E402
 from main import process_url            # noqa: E402
 from store import (                     # noqa: E402
     create_news_image, create_stream, find_similar_image, get_all_settings,
-    get_news_item, get_stream, get_video, increment_image_reuse, list_news_images,
-    list_news_items, list_stream_briefs, list_streams, search_news_items, set_settings,
-    update_news_item_enrichment, update_news_item_status, update_stream_fields,
+    get_expansion, get_news_item, get_stream, get_video, increment_image_reuse,
+    list_expansions, list_news_images, list_news_items, list_stream_briefs,
+    list_streams, search_news_items, set_settings, update_news_item_enrichment,
+    update_news_item_status, update_stream_fields, upsert_expansion,
 )
 
 from prisma import Prisma               # noqa: E402
@@ -444,6 +445,196 @@ def read_video(video_id: str, segments: bool = False) -> dict:
             "created_at": latest_brief.createdAt.isoformat(),
         } if latest_brief else None,
     }
+
+
+# ─── Local LLM (Ollama) — spec expansion ─────────────────────────
+
+@app.get("/local-llm/models")
+def local_llm_models() -> dict:
+    """List models installed on the local Ollama daemon."""
+    import local_llm
+    models = local_llm.list_installed_models()
+    return {
+        "endpoint": local_llm._endpoint(),
+        "reachable": bool(models),
+        "models": [
+            {
+                "name": m.get("name"),
+                "size_bytes": m.get("size"),
+                "parameter_size": (m.get("details") or {}).get("parameter_size"),
+                "quantization": (m.get("details") or {}).get("quantization_level"),
+                "family": (m.get("details") or {}).get("family"),
+            }
+            for m in models
+        ],
+    }
+
+
+class ExpandSpecRequest(BaseModel):
+    section_md: str                # body of the section the user clicked
+    section_title: str = "Черновик ТЗ"  # heading that was above section_md
+    # Output mode — which deliverable the model should produce:
+    #   "spec"     → expanded technical specification (default for spec section)
+    #   "research" → analytical research report (default for non-spec sections)
+    #   "report"   → executive summary / action-item report
+    mode: Literal["spec", "research", "report"] = "spec"
+    model: str | None = None
+    # Context source: which parts of the video go into the prompt.
+    context: Literal["brief", "transcript", "both"] | None = None
+    include_transcript: bool = True
+
+
+@app.post("/videos/{video_id}/expand-spec")
+def expand_spec(video_id: str, req: ExpandSpecRequest):
+    """Stream an expanded spec from local Ollama as SSE.
+
+    Event format mirrors /assistant/chat: each line is `data: <json>\\n\\n`
+    with `{"type": "delta", "text": "..."}` chunks and a final
+    `{"type": "done"}` marker.
+    """
+    import local_llm
+
+    video = get_video(video_id, with_segments=req.include_transcript)
+    if not video:
+        raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
+    if not video.briefs:
+        raise HTTPException(status_code=400, detail="Video has no brief yet")
+
+    latest = video.briefs[-1]
+    settings = get_all_settings()
+    model = (req.model or settings.get("local_llm_model") or local_llm.DEFAULT_MODEL).strip()
+    num_ctx = int(settings.get("local_llm_num_ctx") or local_llm.DEFAULT_NUM_CTX)
+    temperature = float(settings.get("local_llm_temperature") or 0.3)
+    max_tx_chars = int(settings.get("local_llm_max_transcript_chars") or local_llm.MAX_TRANSCRIPT_CHARS)
+
+    # Resolve context source. Prefer the new `context` field; fall back to legacy bool.
+    ctx_mode = req.context or ("both" if req.include_transcript else "brief")
+    use_brief = ctx_mode in ("brief", "both")
+    use_transcript = ctx_mode in ("transcript", "both")
+
+    sb_json = None
+    if use_brief and latest.contentJson:
+        try:
+            sb_json = (json.loads(latest.contentJson) if isinstance(latest.contentJson, str)
+                       else latest.contentJson).get("software_brief")
+        except (json.JSONDecodeError, AttributeError):
+            sb_json = None
+
+    transcript_excerpt = ""
+    if use_transcript and video.segments:
+        transcript_excerpt = "\n".join(s.text for s in video.segments if s.text)
+        local_llm.MAX_TRANSCRIPT_CHARS = max_tx_chars
+
+    system, user = local_llm.build_expand_prompt(
+        mode=req.mode,
+        video_title=video.title or video_id,
+        section_title=req.section_title,
+        section_md=req.section_md,
+        software_brief_json=sb_json,
+        full_brief_md=(latest.contentMd or "") if use_brief else "",
+        transcript_excerpt=transcript_excerpt,
+    )
+
+    def event_stream():
+        import time
+        started = time.monotonic()
+        chunks: list[str] = []
+        try:
+            # Send a meta frame first so the UI can show context size before tokens flow.
+            meta = {
+                "type": "meta",
+                "model": model,
+                "mode": req.mode,
+                "num_ctx": num_ctx,
+                "context_mode": ctx_mode,
+                "transcript_chars": len(transcript_excerpt[:max_tx_chars]),
+                "brief_chars": len(latest.contentMd or "") if use_brief else 0,
+            }
+            yield f"data: {json.dumps(meta, ensure_ascii=False)}\n\n"
+            for piece in local_llm.stream_chat(
+                system=system, user=user, model=model,
+                num_ctx=num_ctx, temperature=temperature,
+            ):
+                chunks.append(piece)
+                yield f"data: {json.dumps({'type': 'delta', 'text': piece}, ensure_ascii=False)}\n\n"
+            full_text = "".join(chunks).strip()
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            # UPSERT: same (videoId, mode) replaces previous expansion. The DB
+            # always reflects the latest version — no "history" pile-up by design.
+            saved_id = None
+            if full_text:
+                try:
+                    row = upsert_expansion(
+                        video_id=video_id, mode=req.mode,
+                        source_title=req.section_title, source_md=req.section_md,
+                        context_mode=ctx_mode, model=model, num_ctx=num_ctx,
+                        content_md=full_text, input_chars=len(user),
+                        elapsed_ms=elapsed_ms,
+                    )
+                    saved_id = row.id if row else None
+                except Exception as save_err:
+                    # Don't fail the stream if persistence breaks — surface a soft warning.
+                    yield f"data: {json.dumps({'type': 'warn', 'msg': f'не сохранено в БД: {save_err}'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'model': model, 'mode': req.mode, 'elapsed_ms': elapsed_ms, 'saved_id': saved_id}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            err = {"type": "error", "msg": f"{type(e).__name__}: {e}"}
+            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ─── Expansion accessors (for UI preload + downloads) ─────────────
+
+def _expansion_to_dict(e) -> dict:
+    return {
+        "id": e.id,
+        "video_id": e.videoId,
+        "mode": e.mode,
+        "source_title": e.sourceTitle,
+        "source_md": e.sourceMd,
+        "context_mode": e.contextMode,
+        "model": e.model,
+        "num_ctx": e.numCtx,
+        "content_md": e.contentMd,
+        "input_chars": e.inputChars,
+        "elapsed_ms": e.elapsedMs,
+        "created_at": e.createdAt.isoformat(),
+        "updated_at": e.updatedAt.isoformat(),
+    }
+
+
+@app.get("/videos/{video_id}/expansions")
+def read_expansions(video_id: str) -> list[dict]:
+    """All saved expansions for a video. Used by UI to pre-fill modal on open."""
+    rows = list_expansions(video_id)
+    return [_expansion_to_dict(e) for e in rows]
+
+
+@app.get("/videos/{video_id}/expansions/{mode}")
+def read_expansion(video_id: str, mode: Literal["spec", "research", "report"]) -> dict:
+    e = get_expansion(video_id, mode)
+    if not e:
+        raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
+    return _expansion_to_dict(e)
+
+
+@app.get("/videos/{video_id}/expansions/{mode}.pdf")
+def export_expansion_pdf(video_id: str, mode: Literal["spec", "research", "report"]):
+    """Render a saved expansion as a PDF. Available for all modes, but the UI
+    only surfaces the button for research/report (ТЗ stays markdown for Cursor)."""
+    from export import markdown_to_pdf
+    e = get_expansion(video_id, mode)
+    if not e:
+        raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
+    title_map = {"spec": "Расширенное ТЗ", "research": "Исследование", "report": "Репорт"}
+    title = f"{title_map.get(mode, 'Расширение')}: {e.sourceTitle}"
+    pdf_bytes = markdown_to_pdf(e.contentMd, title=title)
+    filename = f"{mode}-{video_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ─── Pipeline ─────────────────────────────────────────────────────

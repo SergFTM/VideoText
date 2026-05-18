@@ -480,6 +480,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "assistant_cache_enabled":      True,              # reuse prior answers via fastembed similarity
     "assistant_cache_similarity":   0.85,              # threshold 0.0-1.0
     "assistant_auto_confirm_writes": False,            # if True, writes don't require explicit user OK (risky)
+    # Local LLM (Ollama) — used by spec-expansion in the brief view
+    "local_llm_model":              "qwen2.5:7b",      # any installed Ollama tag; pick from /local-llm/models
+    "local_llm_num_ctx":            32768,             # qwen2.5 native cap; default 2048 truncates brief+transcript
+    "local_llm_temperature":        0.3,               # lower = more focused/deterministic specs
+    "local_llm_max_transcript_chars": 60000,           # raw transcript clip before stuffing into prompt
 }
 
 
@@ -533,6 +538,73 @@ def get_all_settings() -> dict:
 
 def set_settings(updates: dict) -> dict:
     return asyncio.run(_set_settings(updates))
+
+
+# ─── Expansions (local-LLM extended sections) ──────────────────────
+
+async def _upsert_expansion(
+    *, video_id: str, mode: str, source_title: str, source_md: str,
+    context_mode: str, model: str, num_ctx: int,
+    content_md: str, input_chars: int, elapsed_ms: int,
+):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.upsert(
+            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+            data={
+                "create": {
+                    "videoId": video_id, "mode": mode,
+                    "sourceTitle": source_title, "sourceMd": source_md,
+                    "contextMode": context_mode, "model": model, "numCtx": num_ctx,
+                    "contentMd": content_md, "inputChars": input_chars,
+                    "elapsedMs": elapsed_ms,
+                },
+                "update": {
+                    "sourceTitle": source_title, "sourceMd": source_md,
+                    "contextMode": context_mode, "model": model, "numCtx": num_ctx,
+                    "contentMd": content_md, "inputChars": input_chars,
+                    "elapsedMs": elapsed_ms,
+                },
+            },
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _get_expansion(video_id: str, mode: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.find_unique(
+            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _list_expansions(video_id: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.find_many(
+            where={"videoId": video_id},
+            order={"updatedAt": "desc"},
+        )
+    finally:
+        await db.disconnect()
+
+
+def upsert_expansion(**kwargs):
+    return asyncio.run(_upsert_expansion(**kwargs))
+
+
+def get_expansion(video_id: str, mode: str):
+    return asyncio.run(_get_expansion(video_id, mode))
+
+
+def list_expansions(video_id: str):
+    return asyncio.run(_list_expansions(video_id))
 
 
 # ─── Stream briefs ─────────────────────────────────────────────────
