@@ -93,9 +93,10 @@ model TranscriptEdit {
   id          Int      @id @default(autoincrement())
   videoId     String
   video       Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  version     Int // 1..N within a video
-  contentMd   String // full edited transcript text
-  op          String // "improve" | "structure" | "clean" | "chat" | "rollback"
+  kind        String   @default("transcript") // "transcript" | "brief" | "essence"
+  version     Int // 1..N within (video, kind)
+  contentMd   String // full edited document text
+  op          String // "clean"|"structure"|"improve"|"expand_idea"|"chat"|"seed"|"rollback"
   instruction String   @default("") // user's ТЗ / chat message
   fromVersion Int? // lineage: which version this grew from (null = from original)
   model       String
@@ -103,7 +104,7 @@ model TranscriptEdit {
   elapsedMs   Int      @default(0)
   createdAt   DateTime @default(now())
 
-  @@unique([videoId, version])
+  @@unique([videoId, kind, version])
 }
 
 // Layer 3 — readiness-checklist state per (video, stage). AI-assessed + user overrides.
