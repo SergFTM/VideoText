@@ -263,6 +263,14 @@ function app() {
       window.scrollTo({ top: 0, behavior: 'auto' });
     },
 
+    // Deep-link from the Видео tab into the transcript AI-editor for a video.
+    openTranscriptEditor(videoId) {
+      if (!videoId) return;
+      this.setView('editor');
+      // editor-workspace.js exposes this once its IIFE has run.
+      if (window.editorSelectVideo) window.editorSelectVideo(videoId);
+    },
+
     _applySettingsToForms() {
       if (!this.form.url) {
         this.form.brief_lang = this.settings.default_brief_lang;
