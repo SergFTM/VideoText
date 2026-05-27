@@ -595,8 +595,91 @@ async def _list_expansions(video_id: str):
         await db.disconnect()
 
 
+async def _start_expansion(
+    *, video_id: str, mode: str, source_title: str, source_md: str,
+    context_mode: str, model: str, num_ctx: int, input_chars: int,
+):
+    """UPSERT status=running. On update, preserve the previous contentMd so the
+    UI keeps showing the old artifact while the new one regenerates."""
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.upsert(
+            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+            data={
+                "create": {
+                    "videoId": video_id, "mode": mode, "sourceTitle": source_title,
+                    "sourceMd": source_md, "contextMode": context_mode, "model": model,
+                    "numCtx": num_ctx, "contentMd": "", "inputChars": input_chars,
+                    "elapsedMs": 0, "status": "running", "error": None,
+                },
+                "update": {
+                    "sourceTitle": source_title, "sourceMd": source_md,
+                    "contextMode": context_mode, "model": model, "numCtx": num_ctx,
+                    "inputChars": input_chars, "status": "running", "error": None,
+                },
+            },
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _finish_expansion(*, video_id: str, mode: str, content_md: str, elapsed_ms: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.update(
+            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+            data={"contentMd": content_md, "elapsedMs": elapsed_ms,
+                  "status": "done", "error": None},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _fail_expansion(*, video_id: str, mode: str, error: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.update(
+            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+            data={"status": "error", "error": error[:2000]},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _sweep_running_expansions() -> int:
+    """Mark orphaned running rows (from a crash/restart) as error. Returns count."""
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.update_many(
+            where={"status": "running"},
+            data={"status": "error", "error": "прервано рестартом"},
+        )
+    finally:
+        await db.disconnect()
+
+
 def upsert_expansion(**kwargs):
     return asyncio.run(_upsert_expansion(**kwargs))
+
+
+def start_expansion(**kwargs):
+    return asyncio.run(_start_expansion(**kwargs))
+
+
+def finish_expansion(**kwargs):
+    return asyncio.run(_finish_expansion(**kwargs))
+
+
+def fail_expansion(**kwargs):
+    return asyncio.run(_fail_expansion(**kwargs))
+
+
+def sweep_running_expansions() -> int:
+    return asyncio.run(_sweep_running_expansions())
 
 
 def get_expansion(video_id: str, mode: str):
