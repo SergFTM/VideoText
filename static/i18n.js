@@ -285,6 +285,14 @@ window.I18N = {
     'search.cat_settings':  'Настройки',
     'search.hint':          'Введи 2+ символа · Esc — закрыть',
 
+    // ── Editor docs (transcript / brief / essence blocks)
+    'editor.docs.transcript':   'Расшифровка',
+    'editor.docs.brief':        'Бриф',
+    'editor.docs.essence':      'Суть',
+    'editor.docs.seed':         'сгенерировать суть',
+    'editor.docs.noBrief':      'У видео нет брифа',
+    'editor.docs.pipelineNote': '▸ Этот набор → вход для ТЗ / Алгоритмов / AI-скиллов',
+
     // ── Misc
     'misc.no_data':  '—',
     'misc.briefs_n': 'брифов',  // generic (no Russian pluralization fight)
@@ -570,6 +578,14 @@ window.I18N = {
     'search.cat_news':      'News',
     'search.cat_settings':  'Settings',
     'search.hint':          'Type 2+ chars · Esc to close',
+
+    // ── Editor docs (transcript / brief / essence blocks)
+    'editor.docs.transcript':   'Transcript',
+    'editor.docs.brief':        'Brief',
+    'editor.docs.essence':      'Essence',
+    'editor.docs.seed':         'generate essence',
+    'editor.docs.noBrief':      'Video has no brief',
+    'editor.docs.pipelineNote': '▸ This set → input for Spec / Algorithms / AI-skills',
 
     // ── Misc
     'misc.no_data':  '—',

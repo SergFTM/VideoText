@@ -1512,20 +1512,13 @@
         <div class="editor-item-header">
           <h2 id="tx-title">—</h2>
         </div>
-        <div class="editor-items-meta" id="tx-meta">—</div>
-
-        <div class="tx-view-toggle" style="display:flex; gap:8px; margin:10px 0;">
-          <button type="button" id="tx-show-current"
-                  style="padding:4px 12px; border:1px solid var(--line); border-radius:6px; font-size:12px; cursor:pointer;">улучшенный</button>
-          <button type="button" id="tx-show-original"
-                  style="padding:4px 12px; border:1px solid var(--line); border-radius:6px; font-size:12px; cursor:pointer;">оригинал</button>
+        <div id="doc-block-transcript" class="doc-block"></div>
+        <div id="doc-block-brief" class="doc-block"></div>
+        <div id="doc-block-essence" class="doc-block"></div>
+        <div class="doc-pipeline-note" data-i18n="editor.docs.pipelineNote"
+             style="margin-top:18px; padding-top:12px; border-top:1px dashed var(--line); color:var(--mute); font-size:13px;">
+          ▸ Этот набор → вход для ТЗ / Алгоритмов / AI-скиллов
         </div>
-
-        <pre id="tx-text" class="tx-text" style="white-space:pre-wrap; font-family:inherit; font-size:13px; line-height:1.55; max-height:340px; overflow-y:auto; background:var(--panel); padding:14px; border-radius:8px;"></pre>
-
-        <div id="tx-actions"></div>
-        <div id="tx-preview" style="margin-top:12px;"></div>
-        <div id="tx-versions" style="margin-top:14px;"></div>
       </div>
     </section>
   </div><!-- /#editor-pane-transcripts -->

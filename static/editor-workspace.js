@@ -15,13 +15,15 @@
     items: [],
     streamOptions: [],
     pendingPreview: null,
-    // Transcripts mode
+    // Transcripts mode (three doc blocks: transcript / brief / essence)
     source: 'news',
     txVideos: [],
     txSelectedId: null,
-    txOriginal: '',
-    txVersions: [],
-    txShowing: 'current',
+    docs: {
+      transcript: {},
+      brief: {},
+      essence: {},
+    },
     // Artifacts mode
     afVideos: [],
     afSelectedId: null,
@@ -34,6 +36,12 @@
   function $(id) { return document.getElementById(id); }
   function escapeHtml(s) { return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
   function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+  // i18n: editor-workspace is a standalone IIFE — reach the global tr() helper,
+  // reading the active language from localStorage (same key the Alpine app uses).
+  function t(key) {
+    const lang = localStorage.getItem('vt_lang') || 'ru';
+    return (typeof window.tr === 'function') ? window.tr(lang, key) : key;
+  }
 
   // ── Data loaders ────────────────────────────────────────────────
 
@@ -367,94 +375,229 @@
     } catch (e) { list.innerHTML = `<em>Ошибка: ${escapeHtml(e.message)}</em>`; }
   }
 
+  const DOC_KINDS = ['transcript', 'brief', 'essence'];
+
   async function selectTranscriptVideo(id) {
     state.txSelectedId = id;
     $('tx-empty').style.display = 'none';
     $('tx-item').style.display = 'block';
-    $('tx-title').textContent = 'Загружаю…';
-    $('tx-preview').innerHTML = '';
+    const v = (state.txVideos || []).find(x => x.id === id);
+    $('tx-title').textContent = v ? (v.title || id) : id;
+    DOC_KINDS.forEach(kind => { $('doc-block-' + kind).innerHTML = '<em>Загружаю…</em>'; });
+    for (const kind of DOC_KINDS) {
+      await loadDoc(id, kind);  // sequential keeps order + avoids hammering the backend
+    }
+  }
+
+  // Fetch one doc (+ its edit versions), store into state.docs[kind], render.
+  async function loadDoc(id, kind) {
     try {
-      const t = await fetchJSON(`/videos/${id}/transcript`);
-      state.txOriginal = t.original_md;
-      $('tx-title').textContent = t.title || id;
-      $('tx-meta').textContent = `оригинал ${t.original_chars} симв · версий ${t.versions}`;
-      await loadTranscriptVersions(id);
-      showTranscript('current');
-      renderTranscriptActions();
-    } catch (e) { $('tx-title').textContent = 'Ошибка: ' + e.message; }
+      const [doc, versions] = await Promise.all([
+        fetchJSON(`/videos/${id}/docs/${kind}`),
+        fetchJSON(`/videos/${id}/docs/${kind}/edits`),
+      ]);
+      state.docs[kind] = {
+        original: doc.original_md || '',
+        originalChars: doc.original_chars || 0,
+        hasOriginal: !!doc.has_original,
+        versions: versions || [],
+        showing: (versions && versions.length) ? 'current' : 'original',
+      };
+      renderDocBlock(kind);
+    } catch (e) {
+      $('doc-block-' + kind).innerHTML =
+        `<div class="editor-items-meta">${escapeHtml(t('editor.docs.' + kind))}</div>` +
+        `<em>Ошибка: ${escapeHtml(e.message)}</em>`;
+    }
   }
 
-  async function loadTranscriptVersions(id) {
-    state.txVersions = await fetchJSON(`/videos/${id}/transcript/edits`);
-    renderTranscriptVersions();
+  // Latest persisted version (newest-first list), or null when only the original exists.
+  function latestVersion(kind) {
+    const vs = state.docs[kind].versions;
+    return vs.length ? vs[0].version : null;
   }
 
-  function currentTranscriptText() {
-    return state.txVersions.length ? state.txVersions[0].content_md : state.txOriginal;
+  // The "current" text for a kind = latest version content, else the original.
+  function currentDocText(kind) {
+    const d = state.docs[kind];
+    return d.versions.length ? d.versions[0].content_md : d.original;
   }
 
-  function showTranscript(which) {
-    state.txShowing = which;
-    const on = (b, active) => {
-      if (!b) return;
-      b.style.background = active ? 'var(--ink)' : 'white';
-      b.style.color = active ? 'white' : 'var(--ink)';
-    };
-    on($('tx-show-current'), which === 'current');
-    on($('tx-show-original'), which === 'original');
-    $('tx-text').textContent = which === 'original' ? state.txOriginal : currentTranscriptText();
-  }
+  function renderDocBlock(kind) {
+    const box = $('doc-block-' + kind);
+    if (!box) return;
+    const d = state.docs[kind];
+    const label = escapeHtml(t('editor.docs.' + kind));
+    const heading = `<div class="editor-items-meta" style="font-size:13px; font-weight:600; margin-top:14px;">${label}</div>`;
 
-  function renderTranscriptVersions() {
-    const box = $('tx-versions');
-    if (!state.txVersions.length) { box.innerHTML = '<em>Версий пока нет — это оригинал.</em>'; return; }
-    box.innerHTML = '<div class="editor-items-meta">версии</div>' + state.txVersions.map(v => `
-      <div style="display:flex; gap:10px; align-items:center; padding:4px 0; font-size:12px;">
-        <span>v${v.version} · ${escapeHtml(v.op)} · ${v.input_chars} симв</span>
-        <button type="button" data-roll="${v.version}" style="cursor:pointer;">откатить</button>
-        <a href="/videos/${state.txSelectedId}/transcript/edits/${v.version}.md" target="_blank">.md</a>
-        <a href="/videos/${state.txSelectedId}/transcript/edits/${v.version}.pdf" target="_blank">.pdf</a>
-      </div>`).join('');
-    box.querySelectorAll('[data-roll]').forEach(el =>
-      el.addEventListener('click', () => rollbackTranscript(Number(el.dataset.roll))));
-  }
+    // Brief with no source and no edits → nothing to edit.
+    if (kind === 'brief' && !d.hasOriginal && !d.versions.length) {
+      box.innerHTML = heading +
+        `<div style="font-size:12px; color:var(--mute); margin:6px 0;">${escapeHtml(t('editor.docs.noBrief'))}</div>`;
+      return;
+    }
 
-  async function rollbackTranscript(version) {
-    await fetchJSON(`/videos/${state.txSelectedId}/transcript/edits/${version}/rollback`, { method: 'POST' });
-    await loadTranscriptVersions(state.txSelectedId);
-    showTranscript('current');
-  }
+    // Essence with no source and no edits → offer a single "seed" button.
+    if (kind === 'essence' && !d.hasOriginal && !d.versions.length) {
+      box.innerHTML = heading +
+        `<div class="editor-actions-bar" style="margin:6px 0;">
+           <button type="button" data-seed="1">${escapeHtml(t('editor.docs.seed'))}</button>
+         </div>`;
+      box.querySelector('[data-seed]').addEventListener('click', () => runDocEdit(kind, 'seed', ''));
+      return;
+    }
 
-  function renderTranscriptActions() {
-    $('tx-actions').innerHTML = `
-      <div class="editor-actions-bar">
+    // Full editing controls (namespaced by kind).
+    box.innerHTML = heading + `
+      <div class="editor-items-meta">оригинал ${d.originalChars} симв · версий ${d.versions.length}</div>
+      <div class="tx-view-toggle" style="display:flex; gap:8px; margin:10px 0;">
+        <button type="button" data-show="current"
+                style="padding:4px 12px; border:1px solid var(--line); border-radius:6px; font-size:12px; cursor:pointer;">улучшенный</button>
+        <button type="button" data-show="original"
+                style="padding:4px 12px; border:1px solid var(--line); border-radius:6px; font-size:12px; cursor:pointer;">оригинал</button>
+      </div>
+      <pre id="doc-${kind}-text" class="tx-text" style="white-space:pre-wrap; font-family:inherit; font-size:13px; line-height:1.55; max-height:340px; overflow-y:auto; background:var(--panel); padding:14px; border-radius:8px;"></pre>
+      <div class="editor-actions-bar" style="margin-top:8px;">
         <button type="button" data-op="clean">почистить</button>
         <button type="button" data-op="structure">структурировать</button>
         <button type="button" data-op="improve">улучшить интерпретацию</button>
         <button type="button" data-op="expand_idea">расширить идею</button>
       </div>
-      <input id="tx-instruction" type="text" placeholder="ТЗ / инструкция (необязательно)"
+      <input id="doc-${kind}-instruction" type="text" placeholder="ТЗ / инструкция (необязательно)"
              style="width:100%; margin:8px 0; padding:6px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px;">
       <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
         <label style="font-size:12px; color:var(--mute);">модель:</label>
-        <select id="tx-model" style="font-size:12px; padding:4px 8px;"></select>
+        <select id="doc-${kind}-model" style="font-size:12px; padding:4px 8px;"></select>
       </div>
       <div style="display:flex; gap:6px;">
-        <input id="tx-chat-input" type="text" placeholder="чат: что сделать с текстом…"
+        <input id="doc-${kind}-chat" type="text" placeholder="чат: что сделать с текстом…"
                style="flex:1; padding:6px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px;">
-        <button type="button" id="tx-chat-send" style="cursor:pointer; padding:6px 14px;">→</button>
-      </div>`;
-    const sel = $('tx-model');
+        <button type="button" data-chat-send="1" style="cursor:pointer; padding:6px 14px;">→</button>
+      </div>
+      <div id="doc-${kind}-preview" style="margin-top:12px;"></div>
+      <div id="doc-${kind}-versions" style="margin-top:14px;"></div>`;
+
+    // Toggle (improved | original).
+    const showText = () => {
+      const which = d.showing;
+      const on = (b, active) => {
+        if (!b) return;
+        b.style.background = active ? 'var(--ink)' : 'white';
+        b.style.color = active ? 'white' : 'var(--ink)';
+      };
+      on(box.querySelector('[data-show="current"]'), which === 'current');
+      on(box.querySelector('[data-show="original"]'), which === 'original');
+      box.querySelector('#doc-' + kind + '-text').textContent =
+        which === 'original' ? d.original : currentDocText(kind);
+    };
+    box.querySelectorAll('[data-show]').forEach(el =>
+      el.addEventListener('click', () => { d.showing = el.dataset.show; showText(); }));
+    showText();
+
+    // Model dropdown.
+    const sel = box.querySelector('#doc-' + kind + '-model');
     sel.innerHTML = '<option value="claude-sonnet-4-6">claude-sonnet-4-6</option>';
-    fetchJSON('/local-llm/models').then(d => {
-      (d.models || []).forEach(m => {
+    fetchJSON('/local-llm/models').then(data => {
+      (data.models || []).forEach(m => {
         const o = document.createElement('option'); o.value = m.name; o.textContent = m.name; sel.appendChild(o);
       });
     }).catch(() => {});
-    $('tx-actions').querySelectorAll('[data-op]').forEach(el =>
-      el.addEventListener('click', () => runTranscriptEdit(el.dataset.op, $('tx-instruction').value)));
-    $('tx-chat-send').addEventListener('click', () =>
-      runTranscriptEdit('chat', $('tx-chat-input').value));
+
+    // Op buttons + chat.
+    box.querySelectorAll('[data-op]').forEach(el =>
+      el.addEventListener('click', () =>
+        runDocEdit(kind, el.dataset.op, box.querySelector('#doc-' + kind + '-instruction').value)));
+    box.querySelector('[data-chat-send]').addEventListener('click', () =>
+      runDocEdit(kind, 'chat', box.querySelector('#doc-' + kind + '-chat').value));
+
+    renderDocVersions(kind);
+  }
+
+  function renderDocVersions(kind) {
+    const box = $('doc-' + kind + '-versions');
+    if (!box) return;
+    const d = state.docs[kind];
+    const id = state.txSelectedId;
+    if (!d.versions.length) { box.innerHTML = '<em>Версий пока нет — это оригинал.</em>'; return; }
+    box.innerHTML = '<div class="editor-items-meta">версии</div>' + d.versions.map(v => `
+      <div style="display:flex; gap:10px; align-items:center; padding:4px 0; font-size:12px;">
+        <span>v${v.version} · ${escapeHtml(v.op)} · ${v.input_chars} симв</span>
+        <button type="button" data-roll="${v.version}" style="cursor:pointer;">откатить</button>
+        <a href="/videos/${id}/docs/${kind}/edits/${v.version}.md" target="_blank">.md</a>
+        <a href="/videos/${id}/docs/${kind}/edits/${v.version}.pdf" target="_blank">.pdf</a>
+      </div>`).join('');
+    box.querySelectorAll('[data-roll]').forEach(el =>
+      el.addEventListener('click', () => rollbackDoc(kind, Number(el.dataset.roll))));
+  }
+
+  async function rollbackDoc(kind, version) {
+    const id = state.txSelectedId;
+    await fetchJSON(`/videos/${id}/docs/${kind}/edits/${version}/rollback`, { method: 'POST' });
+    await loadDoc(id, kind);
+  }
+
+  async function runDocEdit(kind, op, instruction) {
+    const id = state.txSelectedId;
+    if (!id) return;
+    const baseVersion = op === 'seed' ? null : latestVersion(kind);
+    const modelSel = $('doc-' + kind + '-model');
+    const model = modelSel ? modelSel.value : 'claude-sonnet-4-6';
+    const box = $('doc-' + kind + '-preview');
+    box.innerHTML = '<div class="editor-preview-loading">Генерирую…</div>';
+
+    let proposed = '';
+    try {
+      const resp = await fetch(`/videos/${id}/docs/${kind}/edit`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ op, instruction, model, base_version: baseVersion }),
+      });
+      if (!resp.ok) throw new Error(`${resp.status} ${await resp.text()}`);
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      box.innerHTML = `<pre id="doc-${kind}-proposed" class="tx-text" style="white-space:pre-wrap; font-family:inherit; font-size:13px; line-height:1.55; max-height:340px; overflow-y:auto; background:var(--panel); padding:14px; border-radius:8px;"></pre>`;
+      const out = $('doc-' + kind + '-proposed');
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const chunks = buf.split('\n\n'); buf = chunks.pop();
+        for (const chunk of chunks) {
+          if (!chunk.startsWith('data: ')) continue;
+          let ev; try { ev = JSON.parse(chunk.slice(6)); } catch (_) { continue; }
+          if (ev.type === 'delta') { proposed += ev.text; out.textContent = proposed; }
+          else if (ev.type === 'error') throw new Error(ev.msg);
+        }
+      }
+      const bar = document.createElement('div');
+      bar.className = 'editor-preview-actions';
+      bar.style.cssText = 'display:flex; gap:8px; margin-top:8px;';
+      bar.innerHTML = `<button type="button" data-role="apply">✓ применить (новая версия)</button>
+                       <button type="button" data-role="diff">показать дифф</button>
+                       <button type="button" data-role="cancel">✕ отмена</button>`;
+      box.appendChild(bar);
+      bar.querySelector('[data-role="cancel"]').onclick = () => { box.innerHTML = ''; };
+      bar.querySelector('[data-role="apply"]').onclick = () =>
+        applyDocEdit(kind, { op, instruction, content_md: proposed, model, from_version: baseVersion });
+      let showingDiff = false;
+      bar.querySelector('[data-role="diff"]').onclick = (ev) => {
+        showingDiff = !showingDiff;
+        ev.target.textContent = showingDiff ? 'показать текст' : 'показать дифф';
+        if (showingDiff) out.innerHTML = renderDiffHtml(currentDocText(kind), proposed);
+        else out.textContent = proposed;
+      };
+    } catch (e) {
+      box.innerHTML = `<div class="editor-preview-error">Ошибка: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function applyDocEdit(kind, payload) {
+    const id = state.txSelectedId;
+    await fetchJSON(`/videos/${id}/docs/${kind}/edits/apply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    await loadDoc(id, kind);  // re-render block showing the new current version
   }
 
   // Minimal line-level diff via LCS -> [{t:' '|'+'|'-', line}]
@@ -483,71 +626,6 @@
                   : 'color:var(--mute);';
       return `<div style="${style}">${escapeHtml(d.t + ' ' + d.line)}</div>`;
     }).join('');
-  }
-
-  async function runTranscriptEdit(op, instruction) {
-    const id = state.txSelectedId;
-    if (!id) return;
-    const baseVersion = state.txVersions.length ? state.txVersions[0].version : null;
-    const model = $('tx-model').value;
-    const box = $('tx-preview');
-    box.innerHTML = '<div class="editor-preview-loading">Генерирую…</div>';
-
-    let proposed = '';
-    try {
-      const resp = await fetch(`/videos/${id}/transcript/edit`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ op, instruction, model, base_version: baseVersion }),
-      });
-      if (!resp.ok) throw new Error(`${resp.status} ${await resp.text()}`);
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      box.innerHTML = '<pre id="tx-proposed" class="tx-text" style="white-space:pre-wrap; font-family:inherit; font-size:13px; line-height:1.55; max-height:340px; overflow-y:auto; background:var(--panel); padding:14px; border-radius:8px;"></pre>';
-      const out = $('tx-proposed');
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const chunks = buf.split('\n\n'); buf = chunks.pop();
-        for (const chunk of chunks) {
-          if (!chunk.startsWith('data: ')) continue;
-          let ev; try { ev = JSON.parse(chunk.slice(6)); } catch (_) { continue; }
-          if (ev.type === 'delta') { proposed += ev.text; out.textContent = proposed; }
-          else if (ev.type === 'error') throw new Error(ev.msg);
-        }
-      }
-      const bar = document.createElement('div');
-      bar.className = 'editor-preview-actions';
-      bar.style.cssText = 'display:flex; gap:8px; margin-top:8px;';
-      bar.innerHTML = `<button type="button" data-role="apply">✓ применить (новая версия)</button>
-                       <button type="button" data-role="diff">показать дифф</button>
-                       <button type="button" data-role="cancel">✕ отмена</button>`;
-      box.appendChild(bar);
-      bar.querySelector('[data-role="cancel"]').onclick = () => { box.innerHTML = ''; };
-      bar.querySelector('[data-role="apply"]').onclick = () =>
-        applyTranscriptEdit({ op, instruction, content_md: proposed, model, from_version: baseVersion });
-      let showingDiff = false;
-      bar.querySelector('[data-role="diff"]').onclick = (ev) => {
-        showingDiff = !showingDiff;
-        ev.target.textContent = showingDiff ? 'показать текст' : 'показать дифф';
-        if (showingDiff) out.innerHTML = renderDiffHtml(currentTranscriptText(), proposed);
-        else out.textContent = proposed;
-      };
-    } catch (e) {
-      box.innerHTML = `<div class="editor-preview-error">Ошибка: ${escapeHtml(e.message)}</div>`;
-    }
-  }
-
-  async function applyTranscriptEdit(payload) {
-    const id = state.txSelectedId;
-    await fetchJSON(`/videos/${id}/transcript/edits/apply`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    $('tx-preview').innerHTML = '<div class="editor-preview-ok">✓ Применено</div>';
-    await loadTranscriptVersions(id);
-    showTranscript('current');
   }
 
   // ── Artifacts mode (durable expand) ────────────────────────────────
@@ -784,12 +862,11 @@
       btn.addEventListener('click', () => runTool(btn.dataset.tool));
     });
 
-    // Source toggle (News | Transcripts) + transcript view toggle.
+    // Source toggle (News | Transcripts | Artifacts). The per-doc view toggles
+    // are now wired inside renderDocBlock(), so there are no global tx-show-* buttons.
     $('editor-src-news').addEventListener('click', () => setSource('news'));
     $('editor-src-transcripts').addEventListener('click', () => setSource('transcripts'));
     $('editor-src-artifacts').addEventListener('click', () => setSource('artifacts'));
-    $('tx-show-current').addEventListener('click', () => showTranscript('current'));
-    $('tx-show-original').addEventListener('click', () => showTranscript('original'));
     $('af-generate').addEventListener('click', () => generateArtifact());
   }
 
