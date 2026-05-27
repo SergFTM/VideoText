@@ -91,3 +91,14 @@ def test_stage_gate_routes_registered():
     assert "/videos/{video_id}/stage-gates" in paths
     assert "/videos/{video_id}/stage-gates/{stage}" in paths
     assert "/videos/{video_id}/stage-assess/{stage}" in paths
+
+
+def test_docs_routes_registered():
+    paths = {r.path for r in app.routes}
+    assert "/videos/{video_id}/docs/{kind}" in paths
+    assert "/videos/{video_id}/docs/{kind}/edits" in paths
+    assert "/videos/{video_id}/docs/{kind}/edit" in paths
+    assert "/videos/{video_id}/docs/{kind}/edits/apply" in paths
+    # legacy transcript aliases must still exist
+    assert "/videos/{video_id}/transcript" in paths
+    assert "/videos/{video_id}/transcript/edits/apply" in paths

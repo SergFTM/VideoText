@@ -61,3 +61,26 @@ def _row(version, content):
 def test_pick_current_prefers_latest_edit_else_original():
     assert server._pick_current("ORIG", []) == "ORIG"
     assert server._pick_current("ORIG", [_row(2, "V2"), _row(1, "V1")]) == "V2"
+
+
+from httpx import ASGITransport, AsyncClient
+from server import app
+
+
+@pytest.mark.asyncio
+async def test_get_docs_reports_original_per_kind(db):
+    v = await db.video.create(data={"id": "vid3", "url": "u", "source": "test"})
+    await db.segment.create(data={"videoId": v.id, "index": 0, "start": 0, "end": 1, "text": "hello"})
+    await db.brief.create(data={
+        "videoId": v.id, "model": "m", "language": "ru", "format": "markdown",
+        "contentMd": "BRIEF BODY", "inputTokens": 0, "outputTokens": 0,
+    })
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        rt = (await ac.get(f"/videos/{v.id}/docs/transcript")).json()
+        rb = (await ac.get(f"/videos/{v.id}/docs/brief")).json()
+        re = (await ac.get(f"/videos/{v.id}/docs/essence")).json()
+        bad = await ac.get(f"/videos/{v.id}/docs/bogus")
+    assert rt["has_original"] and rt["original_md"] == "hello"
+    assert rb["has_original"] and rb["original_md"] == "BRIEF BODY"
+    assert re["has_original"] is False and re["original_md"] == ""
+    assert bad.status_code == 422

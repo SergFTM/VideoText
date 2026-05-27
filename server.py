@@ -728,7 +728,7 @@ def _original_transcript_text(video_id: str) -> tuple[str, Any]:
 
 def _edit_to_dict(e) -> dict:
     return {
-        "id": e.id, "video_id": e.videoId, "version": e.version,
+        "id": e.id, "video_id": e.videoId, "kind": e.kind, "version": e.version,
         "content_md": e.contentMd, "op": e.op, "instruction": e.instruction,
         "from_version": e.fromVersion, "model": e.model,
         "input_chars": e.inputChars, "elapsed_ms": e.elapsedMs,
@@ -889,6 +889,160 @@ def transcript_edit_rollback(video_id: str, version: int) -> dict:
     row = rollback_transcript_edit(video_id, version)
     if not row:
         raise HTTPException(status_code=404, detail=f"No v{version} for {video_id}")
+    return _edit_to_dict(row)
+
+
+# ─── Generalized doc editor (transcript | brief | essence) ─────────
+
+def _require_kind(kind: str) -> str:
+    if kind not in _DOC_KINDS:
+        raise HTTPException(status_code=422, detail=f"Unknown doc kind: {kind}")
+    return kind
+
+
+def _doc_title(kind: str) -> str:
+    return {"transcript": "Расшифровка", "brief": "Бриф", "essence": "Суть"}[kind]
+
+
+@app.get("/videos/{video_id}/docs/{kind}")
+def read_doc(video_id: str, kind: str) -> dict:
+    _require_kind(kind)
+    original, has_original = _original_doc_text(video_id, kind)
+    edits = list_transcript_edits(video_id, kind=kind)
+    return {
+        "video_id": video_id, "kind": kind,
+        "original_md": original, "original_chars": len(original),
+        "has_original": has_original,
+        "versions": len(edits),
+        "latest_version": edits[0].version if edits else 0,
+    }
+
+
+@app.get("/videos/{video_id}/docs/{kind}/edits")
+def read_doc_edits(video_id: str, kind: str) -> list[dict]:
+    _require_kind(kind)
+    return [_edit_to_dict(e) for e in list_transcript_edits(video_id, kind=kind)]
+
+
+@app.get("/videos/{video_id}/docs/{kind}/edits/{version}.pdf")
+def export_doc_edit_pdf(video_id: str, kind: str, version: int):
+    _require_kind(kind)
+    from export import markdown_to_pdf
+    e = get_transcript_edit(video_id, version, kind=kind)
+    if not e:
+        raise HTTPException(status_code=404, detail=f"No v{version} for {video_id}/{kind}")
+    pdf_bytes = markdown_to_pdf(e.contentMd, title=f"{_doc_title(kind)} v{version}")
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{kind}-v{version}-{video_id}.pdf"'},
+    )
+
+
+@app.get("/videos/{video_id}/docs/{kind}/edits/{version}.md")
+def export_doc_edit_md(video_id: str, kind: str, version: int):
+    _require_kind(kind)
+    e = get_transcript_edit(video_id, version, kind=kind)
+    if not e:
+        raise HTTPException(status_code=404, detail=f"No v{version} for {video_id}/{kind}")
+    return Response(
+        content=e.contentMd, media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{kind}-v{version}-{video_id}.md"'},
+    )
+
+
+@app.get("/videos/{video_id}/docs/{kind}/edits/{version}")
+def read_doc_edit(video_id: str, kind: str, version: int) -> dict:
+    _require_kind(kind)
+    e = get_transcript_edit(video_id, version, kind=kind)
+    if not e:
+        raise HTTPException(status_code=404, detail=f"No v{version} for {video_id}/{kind}")
+    return _edit_to_dict(e)
+
+
+class DocEditRequest(BaseModel):
+    op: Literal["improve", "structure", "clean", "chat", "expand_idea", "seed"] = "improve"
+    instruction: str = ""
+    model: str | None = None
+    base_version: int | None = None
+
+
+@app.post("/videos/{video_id}/docs/{kind}/edit")
+def doc_edit_preview(video_id: str, kind: str, req: DocEditRequest):
+    """Stream a proposed new full text (SSE). Does NOT persist."""
+    import transcript_edit
+
+    _require_kind(kind)
+    settings = get_all_settings()
+    model = (req.model or settings.get("editor_transcript_model") or "claude-sonnet-4-6").strip()
+    num_ctx = int(settings.get("local_llm_num_ctx") or 32768)
+    temperature = float(settings.get("local_llm_temperature") or 0.3)
+
+    if kind == "essence" and req.op == "seed":
+        tx = _current_doc_text(video_id, "transcript")
+        br = _current_doc_text(video_id, "brief")
+        if not (tx or br).strip():
+            raise HTTPException(status_code=400, detail="Нет исходного текста для сути")
+        system, user = transcript_edit.build_seed_prompt(transcript_text=tx, brief_md=br)
+    else:
+        if req.base_version:
+            base = get_transcript_edit(video_id, req.base_version, kind=kind)
+            if not base:
+                raise HTTPException(status_code=404, detail=f"No v{req.base_version}")
+            current = base.contentMd
+        else:
+            current = _current_doc_text(video_id, kind)
+        system, user = transcript_edit.build_edit_prompt(
+            op=req.op, current_text=current, instruction=req.instruction, kind=kind)
+
+    def event_stream():
+        import time
+        started = time.monotonic()
+        try:
+            yield f"data: {json.dumps({'type': 'meta', 'model': model, 'op': req.op, 'kind': kind, 'current_chars': len(user)}, ensure_ascii=False)}\n\n"
+            if transcript_edit._is_claude(model):
+                pieces = transcript_edit._stream_claude(system, user, model)
+            else:
+                pieces = local_llm.stream_chat(system=system, user=user, model=model,
+                                                num_ctx=num_ctx, temperature=temperature)
+            for piece in pieces:
+                yield f"data: {json.dumps({'type': 'delta', 'text': piece}, ensure_ascii=False)}\n\n"
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            yield f"data: {json.dumps({'type': 'done', 'model': model, 'op': req.op, 'elapsed_ms': elapsed_ms}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'msg': f'{type(e).__name__}: {e}'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+class DocApplyRequest(BaseModel):
+    op: str
+    instruction: str = ""
+    content_md: str
+    model: str = ""
+    from_version: int | None = None
+    elapsed_ms: int = 0
+
+
+@app.post("/videos/{video_id}/docs/{kind}/edits/apply")
+def doc_edit_apply(video_id: str, kind: str, req: DocApplyRequest) -> dict:
+    _require_kind(kind)
+    if not (req.content_md or "").strip():
+        raise HTTPException(status_code=400, detail="Пустой текст — нечего сохранять")
+    row = create_transcript_edit(
+        video_id=video_id, kind=kind, content_md=req.content_md, op=req.op,
+        instruction=req.instruction, from_version=req.from_version,
+        model=req.model or "claude-sonnet-4-6",
+        input_chars=len(req.content_md), elapsed_ms=req.elapsed_ms,
+    )
+    return _edit_to_dict(row)
+
+
+@app.post("/videos/{video_id}/docs/{kind}/edits/{version}/rollback")
+def doc_edit_rollback(video_id: str, kind: str, version: int) -> dict:
+    _require_kind(kind)
+    row = rollback_transcript_edit(video_id, version, kind=kind)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"No v{version} for {video_id}/{kind}")
     return _edit_to_dict(row)
 
 
