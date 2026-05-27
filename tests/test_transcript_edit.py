@@ -5,7 +5,16 @@ wiring directly. Guards against an op silently falling back to the wrong prompt.
 """
 import transcript_edit as te
 
-_OPS = ["improve", "structure", "clean", "chat"]
+_OPS = ["improve", "structure", "clean", "chat", "expand_idea"]
+
+
+def test_clean_forbids_adding_new():
+    assert "не добав" in te.SYSTEM_PROMPTS["clean"].lower()
+
+
+def test_expand_idea_allows_new_and_is_registered():
+    s = te.SYSTEM_PROMPTS["expand_idea"].lower()
+    assert "расшир" in s or "развив" in s
 
 
 def _build(op):
