@@ -30,6 +30,7 @@ model Video {
   runs            Run[]
   expansions      Expansion[]
   transcriptEdits TranscriptEdit[]
+  stageGates      StageGate[]
 }
 
 // Local-LLM-generated expansions of brief sections: ТЗ, ресерч, репорт.
@@ -103,6 +104,19 @@ model TranscriptEdit {
   createdAt   DateTime @default(now())
 
   @@unique([videoId, version])
+}
+
+// Layer 3 — readiness-checklist state per (video, stage). AI-assessed + user overrides.
+model StageGate {
+  id         Int       @id @default(autoincrement())
+  videoId    String
+  video      Video     @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  stage      String // "research" | "report" | "spec" | "ai_algorithms"
+  items      String // JSON: [{key,label,checked,ai_note}]
+  assessedAt DateTime?
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([videoId, stage])
 }
 
 model Run {
