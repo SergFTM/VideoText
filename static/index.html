@@ -77,7 +77,7 @@
        x-data="app()" resolves to `undefined` and every expression breaks. -->
   <script src="/static/i18n.js?v=11"></script>
   <script src="/static/assistant-panel.js?v=11"></script>
-  <script src="/static/app.js?v=12"></script>
+  <script src="/static/app.js?v=13"></script>
   <script src="/static/editor-inline.js"></script>
   <script src="/static/editor-workspace.js?v=4"></script>
 </head>
@@ -482,9 +482,6 @@
                           class="text-ink-500 hover:text-ink"
                           title="Скачать ТЗ как markdown-файл">скачать .md</button>
                 </template>
-                <button @click="openExpandSpec(result.video_id, sec.title, sec.body)"
-                        class="text-ink-500 hover:text-ink"
-                        title="Расширить через локальную нейронку (Ollama): ТЗ / ресерч / репорт">🦙 расширить</button>
               </div>
             </div>
             <div class="prose" x-html="renderMarkdown(sec.body)"></div>
@@ -2566,115 +2563,6 @@
   </div>
 </div>
 
-<!-- Spec expansion modal (local Ollama) -->
-<div x-show="specExpand.open" x-cloak x-transition.opacity class="modal-backdrop"
-     @click.self="closeExpandSpec()"
-     @keydown.escape.window="closeExpandSpec()">
-  <div class="modal" style="max-width: 820px; width: 90vw; max-height: 86vh; display: flex; flex-direction: column;">
-    <div class="flex items-center gap-3" style="padding: 14px 18px; border-bottom: 1px solid var(--line);">
-      <span style="font-size: 18px;">🦙</span>
-      <div style="flex: 1;">
-        <div style="font-size: 14px; font-weight: 600; color: var(--ink);"
-             x-text="{ spec: 'Расширить в ТЗ', research: 'Подготовить ресерч', report: 'Составить репорт', ai_skills: 'Спроектировать AI-скиллы', ai_algorithms: 'Описать алгоритмы для AI' }[specExpand.mode] || 'Расширить'"></div>
-        <div style="font-size: 11px; color: var(--mute);" x-text="'из секции: ' + specExpand.sourceTitle"></div>
-      </div>
-      <button @click="closeExpandSpec()" class="text-ink-500 hover:text-ink text-[13px]">✕</button>
-    </div>
-
-    <!-- Mode picker: spec / research / report. Dictates the system prompt server-side. -->
-    <div class="flex items-center gap-3 flex-wrap" style="padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 12px;">
-      <label style="color: var(--mute);">режим:</label>
-      <div class="inline-flex border border-ink-200 rounded overflow-hidden" :class="specExpand.streaming ? 'opacity-60 pointer-events-none' : ''">
-        <button @click="specExpand.mode = 'spec'" type="button"
-                :style="specExpand.mode === 'spec' ? 'background: var(--ink); color: white;' : 'background: white; color: var(--ink);'"
-                class="px-2.5 py-1 text-[12px] border-r border-ink-200"
-                title="Расширенное ТЗ: User Stories, архитектура, API, acceptance criteria">📋 ТЗ</button>
-        <button @click="specExpand.mode = 'research'" type="button"
-                :style="specExpand.mode === 'research' ? 'background: var(--ink); color: white;' : 'background: white; color: var(--ink);'"
-                class="px-2.5 py-1 text-[12px] border-r border-ink-200"
-                title="Глубокое аналитическое исследование: тезисы, факты, слабые места, открытые вопросы">🔬 ресерч</button>
-        <button @click="specExpand.mode = 'report'" type="button"
-                :style="specExpand.mode === 'report' ? 'background: var(--ink); color: white;' : 'background: white; color: var(--ink);'"
-                class="px-2.5 py-1 text-[12px] border-r border-ink-200"
-                title="Executive-репорт: TL;DR, выводы, метрики, action items">📊 репорт</button>
-        <button @click="specExpand.mode = 'ai_skills'" type="button"
-                :style="specExpand.mode === 'ai_skills' ? 'background: var(--ink); color: white;' : 'background: white; color: var(--ink);'"
-                class="px-2.5 py-1 text-[12px] border-r border-ink-200"
-                title="Возможные AI-скиллы: что ИИ умеет, какие данные смотрит, что сравнивает, по каким правилам решает">🤖 AI-скиллы</button>
-        <button @click="specExpand.mode = 'ai_algorithms'" type="button"
-                :style="specExpand.mode === 'ai_algorithms' ? 'background: var(--ink); color: white;' : 'background: white; color: var(--ink);'"
-                class="px-2.5 py-1 text-[12px]"
-                title="Алгоритмы действий для AI: пошаговый порядок — что взять, что сравнить, что проверить, какой вывод">⚙️ алгоритмы</button>
-      </div>
-      <div style="flex: 1;"></div>
-    </div>
-
-    <div class="flex items-center gap-3 flex-wrap" style="padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 12px;">
-      <label style="color: var(--mute);">модель:</label>
-      <select x-model="specExpand.model" :disabled="specExpand.streaming"
-              class="border border-ink-200 rounded px-2 py-1 text-[12px]" style="min-width: 180px;">
-        <template x-for="m in specExpand.models" :key="m">
-          <option :value="m" x-text="m"></option>
-        </template>
-      </select>
-
-      <!-- Context source: 3-way segmented control. -->
-      <label style="color: var(--mute);">контекст:</label>
-      <div class="inline-flex border border-ink-200 rounded overflow-hidden" :class="specExpand.streaming ? 'opacity-60 pointer-events-none' : ''">
-        <button @click="specExpand.context = 'brief'" type="button"
-                :style="specExpand.context === 'brief' ? 'background: var(--ink); color: white;' : 'background: white; color: var(--ink);'"
-                class="px-2.5 py-1 text-[12px] border-r border-ink-200"
-                title="Только структурированный бриф от Claude — компактно и быстро">бриф</button>
-        <button @click="specExpand.context = 'transcript'" type="button"
-                :style="specExpand.context === 'transcript' ? 'background: var(--ink); color: white;' : 'background: white; color: var(--ink);'"
-                class="px-2.5 py-1 text-[12px] border-r border-ink-200"
-                title="Только сырая расшифровка видео — модель строит результат от первого источника">расшифровка</button>
-        <button @click="specExpand.context = 'both'" type="button"
-                :style="specExpand.context === 'both' ? 'background: var(--ink); color: white;' : 'background: white; color: var(--ink);'"
-                class="px-2.5 py-1 text-[12px]"
-                title="Бриф + расшифровка — самый богатый контекст, медленнее">бриф + расшифровка</button>
-      </div>
-
-      <div style="flex: 1;"></div>
-      <button @click="runExpandSpec()" :disabled="specExpand.streaming || !specExpand.model"
-              class="rounded bg-ink text-white px-3 py-1.5 text-[12px] hover:bg-ink-600 disabled:opacity-30">
-        <span x-show="!specExpand.streaming">сгенерировать</span>
-        <span x-show="specExpand.streaming">генерация…</span>
-      </button>
-    </div>
-
-    <!-- Live phase indicator: connecting → prefill → generating → done.
-         Renders above the output so user always sees what the model is doing. -->
-    <div x-show="specExpand.phase !== 'idle'"
-         style="padding: 10px 18px; border-bottom: 1px solid var(--line); font-size: 12px; display: flex; align-items: center; gap: 10px;"
-         :style="specExpand.phase === 'error' ? 'background: #fef2f2; color: #b91c1c;' : (specExpand.phase === 'done' ? 'background: #f0fdf4; color: #166534;' : 'background: #f8fafc; color: var(--ink);')">
-      <span x-show="['connecting','prefill','generating'].includes(specExpand.phase)"
-            style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease-in-out infinite;"></span>
-      <span x-text="expandPhaseLabel()"></span>
-    </div>
-
-    <div class="scroll-thin" style="flex: 1; overflow-y: auto; padding: 18px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; color: var(--ink);"
-         x-text="specExpand.text || (specExpand.streaming ? '' : expandPlaceholder())">
-    </div>
-
-    <div class="flex items-center gap-3" style="padding: 10px 18px; border-top: 1px solid var(--line); font-size: 11px; color: var(--mute);">
-      <span x-show="specExpand.meta" class="mono"
-            x-text="specExpand.meta && ('ctx ' + specExpand.meta.num_ctx + ' · бриф ' + specExpand.meta.brief_chars + ' · транскрипт ' + specExpand.meta.transcript_chars + ' симв.')"></span>
-      <span x-show="specExpand.savedAt && !specExpand.streaming" style="color: #166534;"
-            x-text="expandSavedLabel()"></span>
-      <div style="flex: 1;"></div>
-      <button @click="copyExpandedSpec()" :disabled="!specExpand.text || specExpand.streaming"
-              class="text-ink-500 hover:text-ink disabled:opacity-30">копировать</button>
-      <button @click="downloadExpandedSpec()" :disabled="!specExpand.text || specExpand.streaming"
-              class="text-ink-500 hover:text-ink disabled:opacity-30">скачать .md</button>
-      <!-- PDF only for ресерч/репорт — ТЗ остаётся .md для Cursor/Claude. -->
-      <template x-if="['research','report'].includes(specExpand.mode)">
-        <button @click="downloadExpansionPdf()" :disabled="!specExpand.text || specExpand.streaming"
-                class="text-ink-500 hover:text-ink disabled:opacity-30">скачать .pdf</button>
-      </template>
-    </div>
-  </div>
-</div>
 
 </body>
 </html>
