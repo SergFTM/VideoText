@@ -41,14 +41,16 @@ from cleanup import get_storage_stats, run_cleanup  # noqa: E402
 from export import news_items_to_json, news_items_to_pdf  # noqa: E402
 from main import process_url            # noqa: E402
 from store import (                     # noqa: E402
-    create_news_image, create_stream, create_transcript_edit, find_similar_image,
-    get_all_settings, get_expansion, get_news_item, get_stream, get_transcript_edit,
-    get_video, increment_image_reuse, list_expansions, list_news_images,
-    list_news_items, list_stream_briefs, list_streams, list_transcript_edits,
-    rollback_transcript_edit, search_news_items, set_settings,
+    create_news_image, create_stream, create_transcript_edit, fail_expansion,
+    find_similar_image, finish_expansion, get_all_settings, get_expansion,
+    get_news_item, get_stream, get_transcript_edit, get_video, increment_image_reuse,
+    list_expansions, list_news_images, list_news_items, list_stream_briefs,
+    list_streams, list_transcript_edits, rollback_transcript_edit, search_news_items,
+    set_settings, start_expansion, sweep_running_expansions,
     update_news_item_enrichment, update_news_item_status, update_stream_fields,
     upsert_expansion,
 )
+import local_llm                        # noqa: E402
 
 from prisma import Prisma               # noqa: E402
 
@@ -57,12 +59,45 @@ from prisma import Prisma               # noqa: E402
 async def lifespan(app: FastAPI):
     await orchestrator.startup()
     try:
+        swept = await asyncio.to_thread(sweep_running_expansions)
+        if swept:
+            print(f"[expand] swept {swept} orphaned 'running' expansion(s) -> error")
+    except Exception as e:
+        print(f"[expand] sweep failed: {e}")
+    try:
         yield
     finally:
         await orchestrator.shutdown()
 
 
 app = FastAPI(title="VideoText", version="0.4.0", lifespan=lifespan)
+
+import threading                        # noqa: E402
+_expansion_jobs: set[tuple[str, str]] = set()
+_expansion_jobs_lock = threading.Lock()
+
+
+def _run_expansion_job(*, video_id, mode, system, user, model, num_ctx, temperature):
+    """Runs in a daemon thread. Streams the LLM fully, then persists. Never tied
+    to the HTTP request, so client disconnect/navigation cannot abort it."""
+    import time
+    started = time.monotonic()
+    try:
+        chunks = list(local_llm.stream_chat(
+            system=system, user=user, model=model,
+            num_ctx=num_ctx, temperature=temperature,
+        ))
+        full_text = "".join(chunks).strip()
+        if full_text:
+            finish_expansion(video_id=video_id, mode=mode, content_md=full_text,
+                             elapsed_ms=int((time.monotonic() - started) * 1000))
+        else:
+            fail_expansion(video_id=video_id, mode=mode, error="пустой ответ модели")
+    except Exception as e:
+        fail_expansion(video_id=video_id, mode=mode, error=f"{type(e).__name__}: {e}")
+    finally:
+        with _expansion_jobs_lock:
+            _expansion_jobs.discard((video_id, mode))
 
 _ROOT = Path(__file__).parent
 _STATIC = _ROOT / "static"
@@ -484,8 +519,8 @@ ExpandMode = Literal["spec", "research", "report", "ai_skills", "ai_algorithms"]
 
 
 class ExpandSpecRequest(BaseModel):
-    section_md: str                # body of the section the user clicked
-    section_title: str = "Черновик ТЗ"  # heading that was above section_md
+    section_md: str = ""                 # optional: source is the whole video now
+    section_title: str = "бриф"
     mode: ExpandMode = "spec"
     model: str | None = None
     # Context source: which parts of the video go into the prompt.
@@ -494,20 +529,24 @@ class ExpandSpecRequest(BaseModel):
 
 
 @app.post("/videos/{video_id}/expand-spec")
-def expand_spec(video_id: str, req: ExpandSpecRequest):
-    """Stream an expanded spec from local Ollama as SSE.
-
-    Event format mirrors /assistant/chat: each line is `data: <json>\\n\\n`
-    with `{"type": "delta", "text": "..."}` chunks and a final
-    `{"type": "done"}` marker.
-    """
-    import local_llm
-
-    video = get_video(video_id, with_segments=req.include_transcript)
+def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
+    """Fire-and-forget: start a durable background generation and return immediately.
+    The result is persisted to Expansion regardless of whether the client stays
+    connected (navigation-proof). The UI polls GET /videos/{id}/expansions/{mode}."""
+    video = get_video(video_id, with_segments=True)
     if not video:
         raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
     if not video.briefs:
-        raise HTTPException(status_code=400, detail="Video has no brief yet")
+        raise HTTPException(status_code=400, detail="У видео нет брифа")
+
+    key = (video_id, req.mode)
+    existing = get_expansion(video_id, req.mode)
+    if existing and existing.status == "running":
+        return {"status": "running", "mode": req.mode, "already": True}
+    with _expansion_jobs_lock:
+        if key in _expansion_jobs:
+            return {"status": "running", "mode": req.mode, "already": True}
+        _expansion_jobs.add(key)
 
     latest = video.briefs[-1]
     settings = get_all_settings()
@@ -516,7 +555,6 @@ def expand_spec(video_id: str, req: ExpandSpecRequest):
     temperature = float(settings.get("local_llm_temperature") or 0.3)
     max_tx_chars = int(settings.get("local_llm_max_transcript_chars") or local_llm.MAX_TRANSCRIPT_CHARS)
 
-    # Resolve context source. Prefer the new `context` field; fall back to legacy bool.
     ctx_mode = req.context or ("both" if req.include_transcript else "brief")
     use_brief = ctx_mode in ("brief", "both")
     use_transcript = ctx_mode in ("transcript", "both")
@@ -535,61 +573,26 @@ def expand_spec(video_id: str, req: ExpandSpecRequest):
         local_llm.MAX_TRANSCRIPT_CHARS = max_tx_chars
 
     system, user = local_llm.build_expand_prompt(
-        mode=req.mode,
-        video_title=video.title or video_id,
-        section_title=req.section_title,
-        section_md=req.section_md,
+        mode=req.mode, video_title=video.title or video_id,
+        section_title=req.section_title, section_md=req.section_md,
         software_brief_json=sb_json,
         full_brief_md=(latest.contentMd or "") if use_brief else "",
         transcript_excerpt=transcript_excerpt,
     )
 
-    def event_stream():
-        import time
-        started = time.monotonic()
-        chunks: list[str] = []
-        try:
-            # Send a meta frame first so the UI can show context size before tokens flow.
-            meta = {
-                "type": "meta",
-                "model": model,
-                "mode": req.mode,
-                "num_ctx": num_ctx,
-                "context_mode": ctx_mode,
-                "transcript_chars": len(transcript_excerpt[:max_tx_chars]),
-                "brief_chars": len(latest.contentMd or "") if use_brief else 0,
-            }
-            yield f"data: {json.dumps(meta, ensure_ascii=False)}\n\n"
-            for piece in local_llm.stream_chat(
-                system=system, user=user, model=model,
-                num_ctx=num_ctx, temperature=temperature,
-            ):
-                chunks.append(piece)
-                yield f"data: {json.dumps({'type': 'delta', 'text': piece}, ensure_ascii=False)}\n\n"
-            full_text = "".join(chunks).strip()
-            elapsed_ms = int((time.monotonic() - started) * 1000)
-            # UPSERT: same (videoId, mode) replaces previous expansion. The DB
-            # always reflects the latest version — no "history" pile-up by design.
-            saved_id = None
-            if full_text:
-                try:
-                    row = upsert_expansion(
-                        video_id=video_id, mode=req.mode,
-                        source_title=req.section_title, source_md=req.section_md,
-                        context_mode=ctx_mode, model=model, num_ctx=num_ctx,
-                        content_md=full_text, input_chars=len(user),
-                        elapsed_ms=elapsed_ms,
-                    )
-                    saved_id = row.id if row else None
-                except Exception as save_err:
-                    # Don't fail the stream if persistence breaks — surface a soft warning.
-                    yield f"data: {json.dumps({'type': 'warn', 'msg': f'не сохранено в БД: {save_err}'}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'done', 'model': model, 'mode': req.mode, 'elapsed_ms': elapsed_ms, 'saved_id': saved_id}, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            err = {"type": "error", "msg": f"{type(e).__name__}: {e}"}
-            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    # Mark running (preserves any previous content) BEFORE launching the thread.
+    start_expansion(
+        video_id=video_id, mode=req.mode, source_title=req.section_title,
+        source_md=req.section_md, context_mode=ctx_mode, model=model,
+        num_ctx=num_ctx, input_chars=len(user),
+    )
+    threading.Thread(
+        target=_run_expansion_job, daemon=True,
+        kwargs={"video_id": video_id, "mode": req.mode, "system": system,
+                "user": user, "model": model, "num_ctx": num_ctx,
+                "temperature": temperature},
+    ).start()
+    return {"status": "running", "mode": req.mode, "context_mode": ctx_mode}
 
 
 # ─── Expansion accessors (for UI preload + downloads) ─────────────
@@ -607,6 +610,8 @@ def _expansion_to_dict(e) -> dict:
         "content_md": e.contentMd,
         "input_chars": e.inputChars,
         "elapsed_ms": e.elapsedMs,
+        "status": getattr(e, "status", "done"),
+        "error": getattr(e, "error", None),
         "created_at": e.createdAt.isoformat(),
         "updated_at": e.updatedAt.isoformat(),
     }
