@@ -28,6 +28,7 @@
     afMode: 'research',
     afExpansions: {},
     afPoll: null,
+    afGates: {},
   };
 
   function $(id) { return document.getElementById(id); }
@@ -555,6 +556,22 @@
     ['research', 'Ресерч'], ['report', 'Репорт'], ['spec', 'ТЗ'],
     ['uiux', 'UI/UX'], ['ai_algorithms', 'Алгоритмы'], ['ai_skills', 'AI-скиллы'],
   ];
+  const AF_ORDER = ['research', 'report', 'spec', 'uiux', 'ai_algorithms', 'ai_skills'];
+  const AF_LABEL = { research: 'Ресерч', report: 'Репорт', spec: 'ТЗ', uiux: 'UI/UX', ai_algorithms: 'Алгоритмы', ai_skills: 'AI-скиллы' };
+  const AF_GATE_PRED = { report: 'research', spec: 'report', ai_algorithms: 'spec', ai_skills: 'ai_algorithms' };
+  const AF_CHECKLIST_STAGES = ['research', 'report', 'spec', 'ai_algorithms'];
+  const AF_HINT = {
+    research: 'Если ресерч показал, что идея нежизнеспособна → вернись к брифу, переформулируй.',
+    report: 'Если репорт без однозначной рекомендации → доп. ресерч по открытым вопросам.',
+    spec: 'Если ТЗ противоречиво → назад к репорту, уточни решение.',
+    uiux: 'Если сценарий не сходится с ТЗ → уточни ТЗ.',
+    ai_algorithms: 'Если алгоритм не покрывает граничные случаи → доработай, не иди в AI-скилл.',
+    ai_skills: 'Если AI-скилл нестабилен → пересмотри алгоритм и формат входных.',
+  };
+  function gateClosed(stage) {
+    const g = state.afGates[stage];
+    return !!(g && g.items && g.items.length && g.items.every(i => i.checked));
+  }
 
   async function loadArtifactVideos() {
     const list = $('af-videos-list');
@@ -588,6 +605,7 @@
     }).catch(() => {});
     renderArtifactModes();
     await loadArtifactExpansions(id);
+    await loadArtifactGates(id);
     selectArtifactMode(state.afMode);
   }
 
@@ -617,6 +635,9 @@
          &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${mode}.pdf" target="_blank">.pdf</a>`
       : '';
     if (e && e.status === 'running') startArtifactPolling();
+    renderStepper();
+    renderChecklist();
+    renderWarningAndHint();
   }
 
   function renderArtifactStatus(e) {
@@ -667,6 +688,80 @@
       ? `<a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.md" target="_blank">.md</a>
          &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.pdf" target="_blank">.pdf</a>`
       : '';
+    renderStepper();
+  }
+
+  async function loadArtifactGates(id) {
+    try { state.afGates = await fetchJSON(`/videos/${id}/stage-gates`); }
+    catch (_) { state.afGates = {}; }
+  }
+
+  function renderStepper() {
+    $('af-stepper').innerHTML = AF_ORDER.map(st => {
+      const e = state.afExpansions[st];
+      const done = e && e.status === 'done';
+      const gated = AF_GATE_PRED[st] && !gateClosed(AF_GATE_PRED[st]);
+      const mark = !e ? '○' : e.status === 'running' ? '⏳' : e.status === 'error' ? '⚠️' : '●';
+      const cur = st === state.afMode;
+      return `<span data-step="${st}" style="cursor:pointer; padding:3px 8px; border-radius:6px;
+        border:1px solid ${cur ? 'var(--ink)' : 'var(--line)'};
+        ${gated ? 'opacity:.6;' : ''} ${done ? 'color:#166534;' : ''}">${mark} ${AF_LABEL[st]}</span>`;
+    }).join('<span style="color:var(--mute-2);">→</span>');
+    $('af-stepper').querySelectorAll('[data-step]').forEach(el =>
+      el.addEventListener('click', () => selectArtifactMode(el.dataset.step)));
+  }
+
+  function renderChecklist() {
+    const box = $('af-checklist');
+    const stage = state.afMode;
+    if (!AF_CHECKLIST_STAGES.includes(stage)) { box.innerHTML = ''; return; }
+    const g = state.afGates[stage];
+    const items = g ? g.items : [];
+    box.innerHTML = `
+      <div class="editor-items-meta">чеклист готовности: ${AF_LABEL[stage]}</div>
+      <button type="button" id="af-assess" style="cursor:pointer; font-size:12px; margin:4px 0;">AI-оценка</button>
+      ${items.length ? items.map((it, i) => `
+        <label style="display:flex; gap:8px; align-items:flex-start; font-size:12px; margin:3px 0;">
+          <input type="checkbox" data-ci="${i}" ${it.checked ? 'checked' : ''}>
+          <span>${escapeHtml(it.label)}${it.ai_note ? ` <em style="color:var(--mute-2);">— ${escapeHtml(it.ai_note)}</em>` : ''}</span>
+        </label>`).join('') : '<em style="font-size:12px; color:var(--mute);">нет оценки — нажми «AI-оценка»</em>'}`;
+    $('af-assess').addEventListener('click', () => assessStage(stage));
+    box.querySelectorAll('[data-ci]').forEach(cb =>
+      cb.addEventListener('change', () => toggleChecklistItem(stage, Number(cb.dataset.ci), cb.checked)));
+  }
+
+  function renderWarningAndHint() {
+    const stage = state.afMode;
+    const pred = AF_GATE_PRED[stage];
+    const w = $('af-warning');
+    if (pred && !gateClosed(pred)) {
+      w.style.display = 'block';
+      w.textContent = `⚠ Рекомендуется сначала закрыть этап «${AF_LABEL[pred]}» (чеклист не пройден) — но сгенерировать можно.`;
+    } else { w.style.display = 'none'; }
+    $('af-hint').textContent = AF_HINT[stage] || '';
+  }
+
+  async function assessStage(stage) {
+    const btn = $('af-assess');
+    if (btn) btn.textContent = 'оцениваю…';
+    try {
+      const g = await fetchJSON(`/videos/${state.afSelectedId}/stage-assess/${stage}`, { method: 'POST' });
+      state.afGates[stage] = g;
+      renderChecklist(); renderStepper(); renderWarningAndHint();
+    } catch (e) {
+      if (btn) btn.textContent = 'AI-оценка';
+      alert('Не удалось оценить: ' + e.message);
+    }
+  }
+
+  async function toggleChecklistItem(stage, idx, checked) {
+    const g = state.afGates[stage]; if (!g) return;
+    g.items[idx].checked = checked;
+    await fetchJSON(`/videos/${state.afSelectedId}/stage-gates/${stage}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: g.items }),
+    });
+    renderStepper(); renderWarningAndHint();
   }
 
   // ── Wire filters + actions ─────────────────────────────────────────
