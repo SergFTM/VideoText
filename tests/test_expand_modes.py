@@ -58,3 +58,21 @@ def test_ai_skills_prompt_is_skill_oriented():
 def test_ai_algorithms_prompt_is_algorithm_oriented():
     system = local_llm.SYSTEM_PROMPTS["ai_algorithms"]
     assert "алгоритм" in system.lower()
+
+
+def test_build_expand_prompt_includes_upstream_outputs():
+    system, user = local_llm.build_expand_prompt(
+        mode="spec", video_title="t", section_title="ТЗ", section_md="",
+        software_brief_json=None, full_brief_md="", transcript_excerpt="",
+        upstream={"report": "ВЫВОД РЕПОРТА: делаем X."},
+    )
+    assert "report" in user
+    assert "ВЫВОД РЕПОРТА" in user
+
+
+def test_build_expand_prompt_upstream_optional():
+    system, user = local_llm.build_expand_prompt(
+        mode="research", video_title="t", section_title="", section_md="",
+        software_brief_json=None, full_brief_md="бриф", transcript_excerpt="",
+    )
+    assert "бриф" in user

@@ -167,6 +167,7 @@ def _format_context(
     software_brief_json: dict | None,
     full_brief_md: str,
     transcript_excerpt: str,
+    upstream: dict[str, str] | None = None,
 ) -> tuple[str, list[str]]:
     """Builds the user-message body shared across all modes.
 
@@ -193,14 +194,23 @@ def _format_context(
     if full_brief_md.strip():
         brief_block = f"\n\n## Полный бриф (структурированная выжимка от Claude)\n{full_brief_md}"
 
+    upstream_block = ""
+    for dep_mode, dep_text in (upstream or {}).items():
+        if dep_text and dep_text.strip():
+            upstream_block += (
+                f"\n\n## Выход предыдущего этапа: {dep_mode} "
+                "(используй как основной вход — конвейер)\n" + dep_text.strip()
+            )
+
     sources = []
     if full_brief_md.strip(): sources.append("брифа")
     if software_brief_json:   sources.append("software_brief JSON")
     if transcript_excerpt:    sources.append("транскрипта видео")
+    if upstream_block:        sources.append("предыдущих этапов")
 
     body = (
         f"## Исходная секция: {section_title}\n{section_md}"
-        f"{brief_block}{sb_block}{transcript_block}"
+        f"{brief_block}{sb_block}{upstream_block}{transcript_block}"
     )
     return body, sources
 
@@ -214,6 +224,7 @@ def build_expand_prompt(
     software_brief_json: dict | None,
     full_brief_md: str,
     transcript_excerpt: str,
+    upstream: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Returns (system_prompt, user_prompt) for any expand mode.
 
@@ -228,6 +239,7 @@ def build_expand_prompt(
         software_brief_json=software_brief_json,
         full_brief_md=full_brief_md,
         transcript_excerpt=transcript_excerpt,
+        upstream=upstream,
     )
     sources_line = ", ".join(sources) if sources else "только исходной секции"
 
