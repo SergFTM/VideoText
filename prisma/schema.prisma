@@ -25,10 +25,11 @@ model Video {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  segments   Segment[]
-  briefs     Brief[]
-  runs       Run[]
-  expansions Expansion[]
+  segments        Segment[]
+  briefs          Brief[]
+  runs            Run[]
+  expansions      Expansion[]
+  transcriptEdits TranscriptEdit[]
 }
 
 // Local-LLM-generated expansions of brief sections: ТЗ, ресерч, репорт.
@@ -80,6 +81,26 @@ model Brief {
   cacheWriteTokens Int      @default(0)
   costUsd          Float? // computed at save time
   createdAt        DateTime @default(now())
+}
+
+// AI-edited versions of a video's transcript. The original Segment[] is the
+// immutable source of truth; each edit is a new append-only version. Rollback
+// to vK creates a new version cloned from vK (history stays linear).
+model TranscriptEdit {
+  id          Int      @id @default(autoincrement())
+  videoId     String
+  video       Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  version     Int // 1..N within a video
+  contentMd   String // full edited transcript text
+  op          String // "improve" | "structure" | "clean" | "chat" | "rollback"
+  instruction String   @default("") // user's ТЗ / chat message
+  fromVersion Int? // lineage: which version this grew from (null = from original)
+  model       String
+  inputChars  Int      @default(0)
+  elapsedMs   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@unique([videoId, version])
 }
 
 model Run {
