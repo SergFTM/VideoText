@@ -8,7 +8,12 @@ falling back to the generic `spec` prompt if a key is dropped or misspelled.
 import local_llm
 
 
-_NEW_MODES = ["ai_skills", "ai_algorithms"]
+_NEW_MODES = ["ai_skills", "ai_algorithms", "uiux"]
+
+
+def test_uiux_prompt_is_interface_oriented():
+    s = local_llm.SYSTEM_PROMPTS["uiux"].lower()
+    assert "экран" in s and "состояни" in s
 
 
 def _build(mode: str):

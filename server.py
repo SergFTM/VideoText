@@ -515,7 +515,7 @@ def local_llm_models() -> dict:
 #   "report"        → executive summary / action-item report
 #   "ai_skills"     → reusable AI-skill definitions derived from the material
 #   "ai_algorithms" → step-by-step action algorithms for an AI agent
-ExpandMode = Literal["spec", "research", "report", "ai_skills", "ai_algorithms"]
+ExpandMode = Literal["spec", "research", "report", "uiux", "ai_skills", "ai_algorithms"]
 
 
 class ExpandSpecRequest(BaseModel):
