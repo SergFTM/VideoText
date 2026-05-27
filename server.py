@@ -727,6 +727,81 @@ def read_transcript_edit(video_id: str, version: int) -> dict:
     return _edit_to_dict(e)
 
 
+class TranscriptEditRequest(BaseModel):
+    op: Literal["improve", "structure", "clean", "chat"] = "improve"
+    instruction: str = ""
+    model: str | None = None        # None/empty -> Claude default
+    base_version: int | None = None  # which version we edit from (None = original)
+
+
+class TranscriptApplyRequest(BaseModel):
+    op: str
+    instruction: str = ""
+    content_md: str
+    model: str = ""
+    from_version: int | None = None
+    elapsed_ms: int = 0
+
+
+@app.post("/videos/{video_id}/transcript/edit")
+def transcript_edit_preview(video_id: str, req: TranscriptEditRequest):
+    """Stream a proposed new full text (SSE). Does NOT persist."""
+    import transcript_edit
+
+    original, _v = _original_transcript_text(video_id)
+    # Edit from the requested base version if given, else the original text.
+    current = original
+    if req.base_version:
+        base = get_transcript_edit(video_id, req.base_version)
+        if not base:
+            raise HTTPException(status_code=404, detail=f"No v{req.base_version}")
+        current = base.contentMd
+
+    settings = get_all_settings()
+    model = (req.model or settings.get("editor_transcript_model") or "claude-sonnet-4-6").strip()
+    num_ctx = int(settings.get("local_llm_num_ctx") or 32768)
+    temperature = float(settings.get("local_llm_temperature") or 0.3)
+
+    def event_stream():
+        import time
+        started = time.monotonic()
+        try:
+            yield f"data: {json.dumps({'type': 'meta', 'model': model, 'op': req.op, 'base_version': req.base_version, 'current_chars': len(current)}, ensure_ascii=False)}\n\n"
+            for piece in transcript_edit.stream_edit(
+                op=req.op, current_text=current, instruction=req.instruction,
+                model=model, num_ctx=num_ctx, temperature=temperature,
+            ):
+                yield f"data: {json.dumps({'type': 'delta', 'text': piece}, ensure_ascii=False)}\n\n"
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            yield f"data: {json.dumps({'type': 'done', 'model': model, 'op': req.op, 'elapsed_ms': elapsed_ms}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'msg': f'{type(e).__name__}: {e}'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/videos/{video_id}/transcript/edits/apply")
+def transcript_edit_apply(video_id: str, req: TranscriptApplyRequest) -> dict:
+    """Persist a new version from the previewed text."""
+    if not (req.content_md or "").strip():
+        raise HTTPException(status_code=400, detail="Пустой текст — нечего сохранять")
+    row = create_transcript_edit(
+        video_id=video_id, content_md=req.content_md, op=req.op,
+        instruction=req.instruction, from_version=req.from_version,
+        model=req.model or "claude-sonnet-4-6",
+        input_chars=len(req.content_md), elapsed_ms=req.elapsed_ms,
+    )
+    return _edit_to_dict(row)
+
+
+@app.post("/videos/{video_id}/transcript/edits/{version}/rollback")
+def transcript_edit_rollback(video_id: str, version: int) -> dict:
+    row = rollback_transcript_edit(video_id, version)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"No v{version} for {video_id}")
+    return _edit_to_dict(row)
+
+
 # ─── Pipeline ─────────────────────────────────────────────────────
 
 @app.post("/briefs")
