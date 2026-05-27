@@ -568,10 +568,13 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         except (json.JSONDecodeError, AttributeError):
             sb_json = None
 
+    # Curated source: prefer the edited blocks over raw segments / raw brief.
     transcript_excerpt = ""
-    if use_transcript and video.segments:
-        transcript_excerpt = "\n".join(s.text for s in video.segments if s.text)
+    if use_transcript:
+        transcript_excerpt = _current_doc_text(video_id, "transcript")
         local_llm.MAX_TRANSCRIPT_CHARS = max_tx_chars
+    curated_brief = _current_doc_text(video_id, "brief") if use_brief else ""
+    essence_block = _essence_section(_current_doc_text(video_id, "essence"))
 
     # Передача: feed predecessor stages' outputs into the prompt (pipeline graph).
     upstream: dict[str, str] = {}
@@ -584,7 +587,7 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         mode=req.mode, video_title=video.title or video_id,
         section_title=req.section_title, section_md=req.section_md,
         software_brief_json=sb_json,
-        full_brief_md=(latest.contentMd or "") if use_brief else "",
+        full_brief_md=(essence_block + curated_brief) if use_brief else essence_block,
         transcript_excerpt=transcript_excerpt,
         upstream=upstream,
     )
@@ -764,6 +767,12 @@ def _current_doc_text(video_id: str, kind: str) -> str:
     """Current working text for a kind = latest edit, else original."""
     original, _has = _original_doc_text(video_id, kind)
     return _pick_current(original, list_transcript_edits(video_id, kind=kind))
+
+
+def _essence_section(essence_md: str) -> str:
+    """Optional '## Суть' block prepended to the expand user-prompt source."""
+    essence_md = (essence_md or "").strip()
+    return f"## Суть\n{essence_md}\n\n" if essence_md else ""
 
 
 @app.get("/videos/{video_id}/transcript")

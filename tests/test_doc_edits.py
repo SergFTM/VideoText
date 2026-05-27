@@ -84,3 +84,10 @@ async def test_get_docs_reports_original_per_kind(db):
     assert rb["has_original"] and rb["original_md"] == "BRIEF BODY"
     assert re["has_original"] is False and re["original_md"] == ""
     assert bad.status_code == 422
+
+
+def test_assemble_essence_section_included_when_present():
+    # Pure helper: builds the optional "## Суть" block fed into expand prompts.
+    assert server._essence_section("") == ""
+    block = server._essence_section("ядро материала")
+    assert "Суть" in block and "ядро материала" in block
