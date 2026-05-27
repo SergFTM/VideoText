@@ -47,6 +47,8 @@ model Expansion {
   contentMd     String   // the expanded text returned by the model
   inputChars    Int      @default(0) // size of the user message sent to ollama
   elapsedMs     Int      @default(0) // wall-clock generation time
+  status        String   @default("done") // "running" | "done" | "error"
+  error         String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
