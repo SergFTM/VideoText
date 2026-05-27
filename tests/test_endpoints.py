@@ -84,3 +84,10 @@ def test_transcript_routes_registered():
     assert "/videos/{video_id}/transcript/edits/{version}" in paths
     assert "/videos/{video_id}/transcript/edit" in paths
     assert "/videos/{video_id}/transcript/edits/apply" in paths
+
+
+def test_stage_gate_routes_registered():
+    paths = {r.path for r in app.routes}
+    assert "/videos/{video_id}/stage-gates" in paths
+    assert "/videos/{video_id}/stage-gates/{stage}" in paths
+    assert "/videos/{video_id}/stage-assess/{stage}" in paths

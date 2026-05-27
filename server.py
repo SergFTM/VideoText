@@ -45,12 +45,13 @@ from store import (                     # noqa: E402
     find_similar_image, finish_expansion, get_all_settings, get_expansion,
     get_news_item, get_stream, get_transcript_edit, get_video, increment_image_reuse,
     list_expansions, list_news_images, list_news_items, list_stream_briefs,
-    list_streams, list_transcript_edits, rollback_transcript_edit, search_news_items,
-    set_settings, start_expansion, sweep_running_expansions,
-    update_news_item_enrichment, update_news_item_status, update_stream_fields,
-    upsert_expansion,
+    get_stage_gate, list_stage_gates, list_streams, list_transcript_edits,
+    rollback_transcript_edit, search_news_items, set_settings, start_expansion,
+    sweep_running_expansions, update_news_item_enrichment, update_news_item_status,
+    update_stream_fields, upsert_expansion, upsert_stage_gate,
 )
 import local_llm                        # noqa: E402
+import pipeline                         # noqa: E402
 
 from prisma import Prisma               # noqa: E402
 
@@ -572,12 +573,20 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         transcript_excerpt = "\n".join(s.text for s in video.segments if s.text)
         local_llm.MAX_TRANSCRIPT_CHARS = max_tx_chars
 
+    # Передача: feed predecessor stages' outputs into the prompt (pipeline graph).
+    upstream: dict[str, str] = {}
+    for dep in pipeline.UPSTREAM.get(req.mode, []):
+        de = get_expansion(video_id, dep)
+        if de and getattr(de, "status", "done") == "done" and de.contentMd:
+            upstream[dep] = de.contentMd
+
     system, user = local_llm.build_expand_prompt(
         mode=req.mode, video_title=video.title or video_id,
         section_title=req.section_title, section_md=req.section_md,
         software_brief_json=sb_json,
         full_brief_md=(latest.contentMd or "") if use_brief else "",
         transcript_excerpt=transcript_excerpt,
+        upstream=upstream,
     )
 
     # Mark running (preserves any previous content) BEFORE launching the thread.
@@ -622,6 +631,52 @@ def read_expansions(video_id: str) -> list[dict]:
     """All saved expansions for a video. Used by UI to pre-fill modal on open."""
     rows = list_expansions(video_id)
     return [_expansion_to_dict(e) for e in rows]
+
+
+# ─── Layer 3: pipeline stage gates ─────────────────────────────────
+
+def _stage_gate_to_dict(g) -> dict:
+    return {
+        "stage": g.stage,
+        "items": json.loads(g.items),
+        "assessed_at": g.assessedAt.isoformat() if g.assessedAt else None,
+        "updated_at": g.updatedAt.isoformat(),
+    }
+
+
+class StageGatePutRequest(BaseModel):
+    items: list[dict]
+
+
+@app.get("/videos/{video_id}/stage-gates")
+def read_stage_gates(video_id: str) -> dict:
+    """Checklist state per gated stage, keyed by stage. Empty if none yet."""
+    return {g.stage: _stage_gate_to_dict(g) for g in list_stage_gates(video_id)}
+
+
+@app.put("/videos/{video_id}/stage-gates/{stage}")
+def put_stage_gate(video_id: str, stage: str, req: StageGatePutRequest) -> dict:
+    """Persist manual checklist overrides."""
+    if stage not in pipeline.CHECKLISTS:
+        raise HTTPException(status_code=400, detail=f"Этап {stage} без чеклиста")
+    row = upsert_stage_gate(video_id=video_id, stage=stage, items=req.items, assessed=False)
+    return _stage_gate_to_dict(row)
+
+
+@app.post("/videos/{video_id}/stage-assess/{stage}")
+def assess_stage(video_id: str, stage: str) -> dict:
+    """AI-assess the stage's artifact against its checklist (Claude, JSON)."""
+    if stage not in pipeline.CHECKLISTS:
+        raise HTTPException(status_code=400, detail=f"Этап {stage} без чеклиста")
+    e = get_expansion(video_id, stage)
+    if not e or not (e.contentMd or "").strip():
+        raise HTTPException(status_code=400, detail="Нет артефакта этапа для оценки")
+    try:
+        items = pipeline.assess_checklist(stage, e.contentMd)
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"AI-оценка не удалась: {ex}")
+    row = upsert_stage_gate(video_id=video_id, stage=stage, items=items, assessed=True)
+    return _stage_gate_to_dict(row)
 
 
 # NOTE: the `.pdf` route MUST be declared before the bare `{mode}` route.
