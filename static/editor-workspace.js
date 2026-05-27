@@ -417,9 +417,10 @@
   function renderTranscriptActions() {
     $('tx-actions').innerHTML = `
       <div class="editor-actions-bar">
-        <button type="button" data-op="improve">улучшить интерпретацию</button>
-        <button type="button" data-op="structure">структурировать</button>
         <button type="button" data-op="clean">почистить</button>
+        <button type="button" data-op="structure">структурировать</button>
+        <button type="button" data-op="improve">улучшить интерпретацию</button>
+        <button type="button" data-op="expand_idea">расширить идею</button>
       </div>
       <input id="tx-instruction" type="text" placeholder="ТЗ / инструкция (необязательно)"
              style="width:100%; margin:8px 0; padding:6px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px;">

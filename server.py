@@ -728,7 +728,7 @@ def read_transcript_edit(video_id: str, version: int) -> dict:
 
 
 class TranscriptEditRequest(BaseModel):
-    op: Literal["improve", "structure", "clean", "chat"] = "improve"
+    op: Literal["improve", "structure", "clean", "chat", "expand_idea"] = "improve"
     instruction: str = ""
     model: str | None = None        # None/empty -> Claude default
     base_version: int | None = None  # which version we edit from (None = original)
