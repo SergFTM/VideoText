@@ -64,3 +64,44 @@ def build_edit_prompt(*, op: str, current_text: str, instruction: str) -> tuple[
         f"--- ТЕКСТ ---\n{current_text}{tail}"
     )
     return system, user
+
+
+# ─── Backend dispatch ──────────────────────────────────────────────
+
+def _is_claude(model: str) -> bool:
+    """True if the model id should be served by Anthropic (vs local Ollama).
+    Empty string means 'use the Claude default'."""
+    m = (model or "").strip()
+    if not m:
+        return True
+    return m.startswith("claude") or m in brief._MODEL_ALIASES
+
+
+def _stream_claude(system: str, user: str, model: str) -> Iterator[str]:
+    """Stream text deltas from Claude. System prompt is prompt-cached."""
+    import anthropic
+    client = anthropic.Anthropic()
+    resolved = brief.resolve_model(model or None)
+    with client.messages.stream(
+        model=resolved,
+        max_tokens=16000,  # full-text rewrites of ~20K-char transcripts
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": user}],
+    ) as stream:
+        for text in stream.text_stream:
+            yield text
+
+
+def stream_edit(
+    *, op: str, current_text: str, instruction: str, model: str,
+    num_ctx: int = local_llm.DEFAULT_NUM_CTX, temperature: float = 0.3,
+) -> Iterator[str]:
+    """Build the prompt and stream the new full text from the chosen backend."""
+    system, user = build_edit_prompt(op=op, current_text=current_text, instruction=instruction)
+    if _is_claude(model):
+        yield from _stream_claude(system, user, model)
+    else:
+        yield from local_llm.stream_chat(
+            system=system, user=user, model=model,
+            num_ctx=num_ctx, temperature=temperature,
+        )

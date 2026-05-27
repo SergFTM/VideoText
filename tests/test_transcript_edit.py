@@ -36,3 +36,11 @@ def test_user_message_carries_text_and_instruction():
 def test_unknown_op_falls_back_to_improve():
     system, _ = te.build_edit_prompt(op="bogus", current_text="x", instruction="")
     assert system == te.SYSTEM_PROMPTS["improve"]
+
+
+def test_is_claude_recognises_claude_ids_and_aliases():
+    assert te._is_claude("claude-sonnet-4-6")
+    assert te._is_claude("sonnet")        # alias from brief._MODEL_ALIASES
+    assert te._is_claude("")              # empty -> default Claude
+    assert not te._is_claude("qwen2.5:7b")
+    assert not te._is_claude("nomic-embed-text:latest")
