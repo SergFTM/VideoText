@@ -75,3 +75,12 @@ async def test_news_items_search_by_q(db):
         hits = r.json()
         assert len(hits) == 1, f"expected 1, got {len(hits)}: {[h['headline'] for h in hits]}"
         assert "UNIQUE_HEADLINE_MARKER" in hits[0]["headline"]
+
+
+def test_transcript_routes_registered():
+    paths = {r.path for r in app.routes}
+    assert "/videos/{video_id}/transcript" in paths
+    assert "/videos/{video_id}/transcript/edits" in paths
+    assert "/videos/{video_id}/transcript/edits/{version}" in paths
+    assert "/videos/{video_id}/transcript/edit" in paths
+    assert "/videos/{video_id}/transcript/edits/apply" in paths

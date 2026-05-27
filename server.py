@@ -41,11 +41,13 @@ from cleanup import get_storage_stats, run_cleanup  # noqa: E402
 from export import news_items_to_json, news_items_to_pdf  # noqa: E402
 from main import process_url            # noqa: E402
 from store import (                     # noqa: E402
-    create_news_image, create_stream, find_similar_image, get_all_settings,
-    get_expansion, get_news_item, get_stream, get_video, increment_image_reuse,
-    list_expansions, list_news_images, list_news_items, list_stream_briefs,
-    list_streams, search_news_items, set_settings, update_news_item_enrichment,
-    update_news_item_status, update_stream_fields, upsert_expansion,
+    create_news_image, create_stream, create_transcript_edit, find_similar_image,
+    get_all_settings, get_expansion, get_news_item, get_stream, get_transcript_edit,
+    get_video, increment_image_reuse, list_expansions, list_news_images,
+    list_news_items, list_stream_briefs, list_streams, list_transcript_edits,
+    rollback_transcript_edit, search_news_items, set_settings,
+    update_news_item_enrichment, update_news_item_status, update_stream_fields,
+    upsert_expansion,
 )
 
 from prisma import Prisma               # noqa: E402
@@ -649,6 +651,80 @@ def read_expansion(video_id: str, mode: ExpandMode) -> dict:
     if not e:
         raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
     return _expansion_to_dict(e)
+
+
+# ─── Transcript AI-editor ──────────────────────────────────────────
+
+def _original_transcript_text(video_id: str) -> tuple[str, Any]:
+    """(joined original transcript text, video). Raises 404/400 as needed."""
+    v = get_video(video_id, with_segments=True)
+    if not v:
+        raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
+    if not v.segments:
+        raise HTTPException(status_code=400, detail="У видео нет расшифровки")
+    text = "\n".join(s.text for s in v.segments if s.text)
+    return text, v
+
+
+def _edit_to_dict(e) -> dict:
+    return {
+        "id": e.id, "video_id": e.videoId, "version": e.version,
+        "content_md": e.contentMd, "op": e.op, "instruction": e.instruction,
+        "from_version": e.fromVersion, "model": e.model,
+        "input_chars": e.inputChars, "elapsed_ms": e.elapsedMs,
+        "created_at": e.createdAt.isoformat(),
+    }
+
+
+@app.get("/videos/{video_id}/transcript")
+def read_transcript(video_id: str) -> dict:
+    text, v = _original_transcript_text(video_id)
+    edits = list_transcript_edits(video_id)
+    return {
+        "video_id": video_id,
+        "title": v.title,
+        "original_md": text,
+        "original_chars": len(text),
+        "versions": len(edits),
+        "latest_version": edits[0].version if edits else 0,
+    }
+
+
+@app.get("/videos/{video_id}/transcript/edits")
+def read_transcript_edits(video_id: str) -> list[dict]:
+    return [_edit_to_dict(e) for e in list_transcript_edits(video_id)]
+
+
+@app.get("/videos/{video_id}/transcript/edits/{version}.pdf")
+def export_transcript_edit_pdf(video_id: str, version: int):
+    from export import markdown_to_pdf
+    e = get_transcript_edit(video_id, version)
+    if not e:
+        raise HTTPException(status_code=404, detail=f"No v{version} for {video_id}")
+    pdf_bytes = markdown_to_pdf(e.contentMd, title=f"Расшифровка v{version}")
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="transcript-v{version}-{video_id}.pdf"'},
+    )
+
+
+@app.get("/videos/{video_id}/transcript/edits/{version}.md")
+def export_transcript_edit_md(video_id: str, version: int):
+    e = get_transcript_edit(video_id, version)
+    if not e:
+        raise HTTPException(status_code=404, detail=f"No v{version} for {video_id}")
+    return Response(
+        content=e.contentMd, media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="transcript-v{version}-{video_id}.md"'},
+    )
+
+
+@app.get("/videos/{video_id}/transcript/edits/{version}")
+def read_transcript_edit(video_id: str, version: int) -> dict:
+    e = get_transcript_edit(video_id, version)
+    if not e:
+        raise HTTPException(status_code=404, detail=f"No v{version} for {video_id}")
+    return _edit_to_dict(e)
 
 
 # ─── Pipeline ─────────────────────────────────────────────────────
