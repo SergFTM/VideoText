@@ -61,18 +61,41 @@ SYSTEM_PROMPTS: dict[str, str] = {
     ),
 }
 
+SYSTEM_PROMPTS["seed"] = (
+    "Ты — редактор. Режим СУТЬ. На входе — расшифровка видео и его бриф."
+    " Сформулируй ядро материала: о чём он, ключевые тезисы, главный вывод.\n\n"
+    "ТРЕБОВАНИЯ: 3–5 предложений или короткий список; только то, что есть в источниках;"
+    " без воды, без выдуманных фактов. Верни ТОЛЬКО текст сути в markdown, без преамбул."
+)
 
-def build_edit_prompt(*, op: str, current_text: str, instruction: str) -> tuple[str, str]:
+# Document-kind → noun used inside the per-op prompts/user message.
+_KIND_NOUN = {"transcript": "расшифровки", "brief": "брифа", "essence": "сути"}
+
+
+def build_edit_prompt(*, op: str, current_text: str, instruction: str,
+                      kind: str = "transcript") -> tuple[str, str]:
     """Returns (system_prompt, user_prompt). Unknown ops fall back to 'improve'."""
     system = SYSTEM_PROMPTS.get(op, SYSTEM_PROMPTS["improve"])
+    noun = _KIND_NOUN.get(kind, "расшифровки")
     instr = (instruction or "").strip()
     if op == "chat":
         tail = f"\n\n## Инструкция пользователя\n{instr}" if instr else ""
     else:
         tail = f"\n\n## Дополнительная инструкция\n{instr}" if instr else ""
     user = (
-        "Вот текущий текст расшифровки.\n\n"
+        f"Вот текущий текст {noun}.\n\n"
         f"--- ТЕКСТ ---\n{current_text}{tail}"
+    )
+    return system, user
+
+
+def build_seed_prompt(*, transcript_text: str, brief_md: str) -> tuple[str, str]:
+    """Essence v1: derive a short core from transcript + brief."""
+    system = SYSTEM_PROMPTS["seed"]
+    user = (
+        "Источники для сути.\n\n"
+        f"--- РАСШИФРОВКА ---\n{transcript_text}\n\n"
+        f"--- БРИФ ---\n{brief_md}"
     )
     return system, user
 

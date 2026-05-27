@@ -87,3 +87,22 @@ async def test_version_numbering_and_rollback(db):
     assert v3.contentMd == "text v1"
     assert v3.op == "rollback"
     assert v3.fromVersion == 1
+
+
+def test_build_edit_prompt_substitutes_noun_by_kind():
+    _s, u_t = te.build_edit_prompt(op="clean", current_text="x", instruction="", kind="transcript")
+    _s, u_b = te.build_edit_prompt(op="clean", current_text="x", instruction="", kind="brief")
+    assert "расшифров" in u_t.lower()
+    assert "бриф" in u_b.lower()
+
+
+def test_seed_prompt_registered_and_builds_from_sources():
+    assert "seed" in te.SYSTEM_PROMPTS
+    system, user = te.build_seed_prompt(
+        transcript_text="Берём цену на бирже A и B.",
+        brief_md="## Суть\nАрбитраж между биржами.",
+    )
+    assert system == te.SYSTEM_PROMPTS["seed"]
+    assert "бирже A" in user            # transcript fed in
+    assert "Арбитраж между биржами" in user  # brief fed in
+    assert "сут" in system.lower()      # essence-oriented
