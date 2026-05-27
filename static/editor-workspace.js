@@ -22,6 +22,12 @@
     txOriginal: '',
     txVersions: [],
     txShowing: 'current',
+    // Artifacts mode
+    afVideos: [],
+    afSelectedId: null,
+    afMode: 'research',
+    afExpansions: {},
+    afPoll: null,
   };
 
   function $(id) { return document.getElementById(id); }
@@ -335,9 +341,13 @@
     };
     on($('editor-src-news'), src === 'news');
     on($('editor-src-transcripts'), src === 'transcripts');
+    on($('editor-src-artifacts'), src === 'artifacts');
     $('editor-pane-news').style.display = src === 'news' ? '' : 'none';
     $('editor-pane-transcripts').style.display = src === 'transcripts' ? '' : 'none';
+    $('editor-pane-artifacts').style.display = src === 'artifacts' ? '' : 'none';
     if (src === 'transcripts') loadTranscriptVideos();
+    if (src === 'artifacts') loadArtifactVideos();
+    if (src !== 'artifacts') stopArtifactPolling();
   }
 
   async function loadTranscriptVideos() {
@@ -539,6 +549,126 @@
     showTranscript('current');
   }
 
+  // ── Artifacts mode (durable expand) ────────────────────────────────
+
+  const AF_MODES = [
+    ['research', 'Ресерч'], ['report', 'Репорт'], ['spec', 'ТЗ'],
+    ['uiux', 'UI/UX'], ['ai_algorithms', 'Алгоритмы'], ['ai_skills', 'AI-скиллы'],
+  ];
+
+  async function loadArtifactVideos() {
+    const list = $('af-videos-list');
+    list.innerHTML = '<em>Загружаю…</em>';
+    try {
+      state.afVideos = await fetchJSON('/videos');
+      $('af-videos-meta').textContent = `${state.afVideos.length} видео`;
+      list.innerHTML = state.afVideos.map(v => `
+        <div class="editor-item-row ${v.id === state.afSelectedId ? 'is-selected' : ''}" data-id="${v.id}">
+          <div class="editor-item-row-title">${escapeHtml(v.title || v.id)}</div>
+          <div class="editor-item-row-meta">${escapeHtml(v.id)}</div>
+        </div>`).join('');
+      list.querySelectorAll('.editor-item-row').forEach(el =>
+        el.addEventListener('click', () => selectArtifactVideo(el.dataset.id)));
+    } catch (e) { list.innerHTML = `<em>Ошибка: ${escapeHtml(e.message)}</em>`; }
+  }
+
+  async function selectArtifactVideo(id) {
+    stopArtifactPolling();
+    state.afSelectedId = id;
+    $('af-empty').style.display = 'none';
+    $('af-item').style.display = 'block';
+    const v = state.afVideos.find(x => x.id === id);
+    $('af-title').textContent = v ? (v.title || id) : id;
+    const sel = $('af-model');
+    sel.innerHTML = '';
+    fetchJSON('/local-llm/models').then(d => {
+      (d.models || []).forEach(m => {
+        const o = document.createElement('option'); o.value = m.name; o.textContent = m.name; sel.appendChild(o);
+      });
+    }).catch(() => {});
+    renderArtifactModes();
+    await loadArtifactExpansions(id);
+    selectArtifactMode(state.afMode);
+  }
+
+  function renderArtifactModes() {
+    $('af-modes').innerHTML = AF_MODES.map(([k, label]) =>
+      `<button type="button" data-mode="${k}">${label}</button>`).join('');
+    $('af-modes').querySelectorAll('[data-mode]').forEach(el =>
+      el.addEventListener('click', () => selectArtifactMode(el.dataset.mode)));
+  }
+
+  async function loadArtifactExpansions(id) {
+    const rows = await fetchJSON(`/videos/${id}/expansions`);
+    state.afExpansions = {};
+    rows.forEach(r => { state.afExpansions[r.mode] = r; });
+  }
+
+  function selectArtifactMode(mode) {
+    stopArtifactPolling();
+    state.afMode = mode;
+    $('af-modes').querySelectorAll('[data-mode]').forEach(el =>
+      el.style.fontWeight = el.dataset.mode === mode ? '700' : '400');
+    const e = state.afExpansions[mode];
+    renderArtifactStatus(e);
+    $('af-text').textContent = e ? (e.content_md || '') : '';
+    $('af-export').innerHTML = (e && e.status === 'done')
+      ? `<a href="/videos/${state.afSelectedId}/expansions/${mode}.md" target="_blank">.md</a>
+         &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${mode}.pdf" target="_blank">.pdf</a>`
+      : '';
+    if (e && e.status === 'running') startArtifactPolling();
+  }
+
+  function renderArtifactStatus(e) {
+    const box = $('af-status');
+    if (!e) { box.textContent = 'нет — нажми «сгенерировать»'; return; }
+    if (e.status === 'running') box.textContent = '⏳ генерируется… (можно уйти с экрана — процесс не прервётся)';
+    else if (e.status === 'error') box.textContent = '⚠️ ошибка: ' + (e.error || '');
+    else box.textContent = '✅ готово';
+  }
+
+  async function generateArtifact() {
+    const id = state.afSelectedId, mode = state.afMode;
+    if (!id) return;
+    await fetchJSON(`/videos/${id}/expand-spec`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, model: $('af-model').value, context: $('af-context').value }),
+    });
+    state.afExpansions[mode] = { mode, status: 'running', content_md: (state.afExpansions[mode] || {}).content_md || '' };
+    renderArtifactStatus(state.afExpansions[mode]);
+    startArtifactPolling();
+  }
+
+  function startArtifactPolling() {
+    if (state.afPoll) return;
+    state.afPoll = setInterval(async () => {
+      const id = state.afSelectedId, mode = state.afMode;
+      if (!id) return;
+      try {
+        const r = await fetch(`/videos/${id}/expansions/${mode}`);
+        if (r.status === 404) { stopArtifactPolling(); return; }
+        const e = await r.json();
+        state.afExpansions[mode] = e;
+        if (state.afMode === mode) selectArtifactModeView(e);
+        if (e.status !== 'running') stopArtifactPolling();
+      } catch (_) { /* transient */ }
+    }, 2000);
+  }
+
+  function stopArtifactPolling() {
+    if (state.afPoll) { clearInterval(state.afPoll); state.afPoll = null; }
+  }
+
+  // Update only the view for the already-selected mode (no re-trigger of polling).
+  function selectArtifactModeView(e) {
+    renderArtifactStatus(e);
+    $('af-text').textContent = e.content_md || '';
+    $('af-export').innerHTML = (e.status === 'done')
+      ? `<a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.md" target="_blank">.md</a>
+         &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.pdf" target="_blank">.pdf</a>`
+      : '';
+  }
+
   // ── Wire filters + actions ─────────────────────────────────────────
 
   function wire() {
@@ -562,8 +692,10 @@
     // Source toggle (News | Transcripts) + transcript view toggle.
     $('editor-src-news').addEventListener('click', () => setSource('news'));
     $('editor-src-transcripts').addEventListener('click', () => setSource('transcripts'));
+    $('editor-src-artifacts').addEventListener('click', () => setSource('artifacts'));
     $('tx-show-current').addEventListener('click', () => showTranscript('current'));
     $('tx-show-original').addEventListener('click', () => showTranscript('original'));
+    $('af-generate').addEventListener('click', () => generateArtifact());
   }
 
   async function bootstrap() {

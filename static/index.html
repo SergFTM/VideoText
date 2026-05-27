@@ -79,7 +79,7 @@
   <script src="/static/assistant-panel.js?v=11"></script>
   <script src="/static/app.js?v=12"></script>
   <script src="/static/editor-inline.js"></script>
-  <script src="/static/editor-workspace.js?v=3"></script>
+  <script src="/static/editor-workspace.js?v=4"></script>
 </head>
 <body class="font-sans bg-bg text-ink antialiased" :lang="lang">
 <a href="#main-content" class="sr-skip" x-text="t('a11y.skip_to_content')">К содержимому</a>
@@ -1394,6 +1394,8 @@
             style="padding:6px 14px; border:1px solid var(--line); border-radius:8px; font-size:13px; cursor:pointer;">Новости</button>
     <button type="button" id="editor-src-transcripts"
             style="padding:6px 14px; border:1px solid var(--line); border-radius:8px; font-size:13px; cursor:pointer;">Расшифровки</button>
+    <button type="button" id="editor-src-artifacts"
+            style="padding:6px 14px; border:1px solid var(--line); border-radius:8px; font-size:13px; cursor:pointer;">Артефакты</button>
   </div>
 
   <div class="editor-workspace" id="editor-pane-news">
@@ -1530,6 +1532,35 @@
       </div>
     </section>
   </div><!-- /#editor-pane-transcripts -->
+
+  <!-- ARTIFACTS PANE: durable expand (ТЗ/ресерч/репорт/UI-UX/алгоритмы/AI-скиллы) -->
+  <div class="editor-workspace" id="editor-pane-artifacts" style="display:none;">
+    <aside class="editor-workspace-left">
+      <div class="editor-items-meta" id="af-videos-meta">—</div>
+      <div class="editor-items-list" id="af-videos-list"><em>Загружаю…</em></div>
+    </aside>
+    <section class="editor-workspace-right">
+      <div class="editor-empty" id="af-empty">← Выбери видео слева</div>
+      <div class="editor-item" id="af-item" style="display:none;">
+        <div class="editor-item-header"><h2 id="af-title">—</h2></div>
+        <div class="editor-actions-bar" id="af-modes"></div>
+        <div style="display:flex; gap:10px; align-items:center; margin:8px 0; font-size:12px; flex-wrap:wrap;">
+          <label style="color:var(--mute);">контекст:</label>
+          <select id="af-context">
+            <option value="both">бриф + расшифровка</option>
+            <option value="brief">бриф</option>
+            <option value="transcript">расшифровка</option>
+          </select>
+          <label style="color:var(--mute);">модель:</label>
+          <select id="af-model" style="min-width:140px;"></select>
+          <button type="button" id="af-generate" style="cursor:pointer; padding:5px 14px;">сгенерировать</button>
+        </div>
+        <div id="af-status" style="font-size:12px; color:var(--mute); margin-bottom:8px;"></div>
+        <pre id="af-text" class="tx-text" style="white-space:pre-wrap; font-family:inherit; font-size:13px; line-height:1.55; max-height:420px; overflow-y:auto; background:var(--panel); padding:14px; border-radius:8px;"></pre>
+        <div id="af-export" style="margin-top:8px; font-size:12px;"></div>
+      </div>
+    </section>
+  </div><!-- /#editor-pane-artifacts -->
 
 </div><!-- /TAB: AI EDITOR -->
 
