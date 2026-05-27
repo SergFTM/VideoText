@@ -47,3 +47,17 @@ async def test_rollback_is_per_kind(db):
     assert v3.op == "rollback"
     assert v3.fromVersion == 1
     assert v3.kind == "essence"
+
+
+import server
+
+
+def _row(version, content):
+    # Minimal stand-in for a TranscriptEdit row (newest-first lists).
+    from types import SimpleNamespace
+    return SimpleNamespace(version=version, contentMd=content)
+
+
+def test_pick_current_prefers_latest_edit_else_original():
+    assert server._pick_current("ORIG", []) == "ORIG"
+    assert server._pick_current("ORIG", [_row(2, "V2"), _row(1, "V1")]) == "V2"

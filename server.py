@@ -736,6 +736,36 @@ def _edit_to_dict(e) -> dict:
     }
 
 
+_DOC_KINDS = ("transcript", "brief", "essence")
+
+
+def _pick_current(original_md: str, edits: list) -> str:
+    """Latest edited text if any (edits are newest-first), else the original."""
+    return edits[0].contentMd if edits else original_md
+
+
+def _original_doc_text(video_id: str, kind: str) -> tuple[str, bool]:
+    """(original text for this kind, has_original). Raises 404 for unknown video."""
+    v = get_video(video_id, with_segments=True)
+    if not v:
+        raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
+    if kind == "transcript":
+        text = "\n".join(s.text for s in (v.segments or []) if s.text)
+        return text, bool(text)
+    if kind == "brief":
+        text = v.briefs[-1].contentMd if v.briefs else ""
+        return text, bool(text)
+    if kind == "essence":
+        return "", False  # no source of truth; v1 comes from `seed`
+    raise HTTPException(status_code=422, detail=f"Unknown doc kind: {kind}")
+
+
+def _current_doc_text(video_id: str, kind: str) -> str:
+    """Current working text for a kind = latest edit, else original."""
+    original, _has = _original_doc_text(video_id, kind)
+    return _pick_current(original, list_transcript_edits(video_id, kind=kind))
+
+
 @app.get("/videos/{video_id}/transcript")
 def read_transcript(video_id: str) -> dict:
     text, v = _original_transcript_text(video_id)
