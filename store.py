@@ -757,8 +757,59 @@ async def _rollback_transcript_edit(video_id: str, version: int):
         await db.disconnect()
 
 
+async def _upsert_stage_gate(*, video_id: str, stage: str, items: list, assessed: bool):
+    import json as _json
+    from datetime import datetime, timezone
+    db = Prisma()
+    await db.connect()
+    try:
+        payload = _json.dumps(items, ensure_ascii=False)
+        assessed_at = datetime.now(timezone.utc) if assessed else None
+        return await db.stagegate.upsert(
+            where={"videoId_stage": {"videoId": video_id, "stage": stage}},
+            data={
+                "create": {"videoId": video_id, "stage": stage, "items": payload,
+                           "assessedAt": assessed_at},
+                "update": {"items": payload, **({"assessedAt": assessed_at} if assessed else {})},
+            },
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _get_stage_gate(video_id: str, stage: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.stagegate.find_unique(
+            where={"videoId_stage": {"videoId": video_id, "stage": stage}})
+    finally:
+        await db.disconnect()
+
+
+async def _list_stage_gates(video_id: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.stagegate.find_many(where={"videoId": video_id})
+    finally:
+        await db.disconnect()
+
+
 def create_transcript_edit(**kwargs):
     return asyncio.run(_create_transcript_edit(**kwargs))
+
+
+def upsert_stage_gate(**kwargs):
+    return asyncio.run(_upsert_stage_gate(**kwargs))
+
+
+def get_stage_gate(video_id: str, stage: str):
+    return asyncio.run(_get_stage_gate(video_id, stage))
+
+
+def list_stage_gates(video_id: str):
+    return asyncio.run(_list_stage_gates(video_id))
 
 
 def list_transcript_edits(video_id: str):

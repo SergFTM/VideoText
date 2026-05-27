@@ -48,3 +48,23 @@ def test_parse_assessment_maps_to_items_with_labels():
     assert {i["key"] for i in items} == {k for k, _ in pipeline.CHECKLISTS["research"]}
     assert by_key["limits"]["checked"] is False
     assert by_key["domain"]["label"]  # label carried through
+
+
+import pytest
+import store
+
+
+@pytest.mark.asyncio
+async def test_stage_gate_upsert_list_get(db):
+    await db.video.create(data={"id": "vidG", "url": "u", "source": "test"})
+    items = [{"key": "domain", "label": "L", "checked": True, "ai_note": "ok"}]
+    r = await store._upsert_stage_gate(video_id="vidG", stage="research", items=items, assessed=True)
+    assert r.stage == "research"
+    got = await store._get_stage_gate("vidG", "research")
+    import json as _j
+    assert _j.loads(got.items)[0]["checked"] is True
+    items2 = [{"key": "domain", "label": "L", "checked": False, "ai_note": ""}]
+    await store._upsert_stage_gate(video_id="vidG", stage="research", items=items2, assessed=False)
+    rows = await store._list_stage_gates("vidG")
+    assert len(rows) == 1
+    assert _j.loads(rows[0].items)[0]["checked"] is False
