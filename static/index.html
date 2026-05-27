@@ -79,7 +79,7 @@
   <script src="/static/assistant-panel.js?v=11"></script>
   <script src="/static/app.js?v=11"></script>
   <script src="/static/editor-inline.js"></script>
-  <script src="/static/editor-workspace.js?v=1"></script>
+  <script src="/static/editor-workspace.js?v=2"></script>
 </head>
 <body class="font-sans bg-bg text-ink antialiased" :lang="lang">
 <a href="#main-content" class="sr-skip" x-text="t('a11y.skip_to_content')">К содержимому</a>
@@ -1376,10 +1376,18 @@
     <h1 class="serif" style="font-size: 40px; line-height: 1.05; margin: 8px 0 4px; letter-spacing: -0.02em;">
       AI <span style="font-style: italic; color: var(--acc);">Editor</span>
     </h1>
-    <p style="color: var(--mute); font-size: 14px; margin: 0;">Рабочее место для редактирования news items с AI-assist.</p>
+    <p style="color: var(--mute); font-size: 14px; margin: 0;">Рабочее место для редактирования news items и расшифровок с AI-assist.</p>
   </header>
 
-  <div class="editor-workspace">
+  <!-- Source toggle: news items vs video transcripts. Both reuse the 2-col chrome. -->
+  <div class="editor-source-toggle" style="display:flex; gap:8px; margin-bottom:16px;">
+    <button type="button" id="editor-src-news"
+            style="padding:6px 14px; border:1px solid var(--line); border-radius:8px; font-size:13px; cursor:pointer;">Новости</button>
+    <button type="button" id="editor-src-transcripts"
+            style="padding:6px 14px; border:1px solid var(--line); border-radius:8px; font-size:13px; cursor:pointer;">Расшифровки</button>
+  </div>
+
+  <div class="editor-workspace" id="editor-pane-news">
 
     <!-- LEFT COLUMN: filters + items list -->
     <aside class="editor-workspace-left">
@@ -1480,7 +1488,40 @@
       </div>
     </section>
 
-  </div>
+  </div><!-- /#editor-pane-news -->
+
+  <!-- TRANSCRIPTS PANE: edit a video's full transcript with AI -->
+  <div class="editor-workspace" id="editor-pane-transcripts" style="display:none;">
+    <aside class="editor-workspace-left">
+      <div class="editor-items-meta" id="tx-videos-meta">—</div>
+      <div class="editor-items-list" id="tx-videos-list"><em>Загружаю…</em></div>
+    </aside>
+
+    <section class="editor-workspace-right">
+      <div class="editor-empty" id="tx-empty">← Выбери видео слева</div>
+
+      <div class="editor-item" id="tx-item" style="display:none;">
+        <div class="editor-item-header">
+          <h2 id="tx-title">—</h2>
+        </div>
+        <div class="editor-items-meta" id="tx-meta">—</div>
+
+        <div class="tx-view-toggle" style="display:flex; gap:8px; margin:10px 0;">
+          <button type="button" id="tx-show-current"
+                  style="padding:4px 12px; border:1px solid var(--line); border-radius:6px; font-size:12px; cursor:pointer;">улучшенный</button>
+          <button type="button" id="tx-show-original"
+                  style="padding:4px 12px; border:1px solid var(--line); border-radius:6px; font-size:12px; cursor:pointer;">оригинал</button>
+        </div>
+
+        <pre id="tx-text" class="tx-text" style="white-space:pre-wrap; font-family:inherit; font-size:13px; line-height:1.55; max-height:340px; overflow-y:auto; background:var(--panel); padding:14px; border-radius:8px;"></pre>
+
+        <div id="tx-actions"></div>
+        <div id="tx-preview" style="margin-top:12px;"></div>
+        <div id="tx-versions" style="margin-top:14px;"></div>
+      </div>
+    </section>
+  </div><!-- /#editor-pane-transcripts -->
+
 </div><!-- /TAB: AI EDITOR -->
 
 <!-- ═══════════════════════════════════════════════════════════ -->

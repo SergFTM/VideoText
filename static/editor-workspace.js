@@ -15,6 +15,13 @@
     items: [],
     streamOptions: [],
     pendingPreview: null,
+    // Transcripts mode
+    source: 'news',
+    txVideos: [],
+    txSelectedId: null,
+    txOriginal: '',
+    txVersions: [],
+    txShowing: 'current',
   };
 
   function $(id) { return document.getElementById(id); }
@@ -317,6 +324,220 @@
     }
   }
 
+  // ── Transcripts mode ───────────────────────────────────────────────
+
+  function setSource(src) {
+    state.source = src;
+    const on = (b, active) => {
+      if (!b) return;
+      b.style.background = active ? 'var(--ink)' : 'white';
+      b.style.color = active ? 'white' : 'var(--ink)';
+    };
+    on($('editor-src-news'), src === 'news');
+    on($('editor-src-transcripts'), src === 'transcripts');
+    $('editor-pane-news').style.display = src === 'news' ? '' : 'none';
+    $('editor-pane-transcripts').style.display = src === 'transcripts' ? '' : 'none';
+    if (src === 'transcripts') loadTranscriptVideos();
+  }
+
+  async function loadTranscriptVideos() {
+    const list = $('tx-videos-list');
+    list.innerHTML = '<em>Загружаю…</em>';
+    try {
+      state.txVideos = await fetchJSON('/videos');
+      $('tx-videos-meta').textContent = `${state.txVideos.length} видео`;
+      list.innerHTML = state.txVideos.map(v => `
+        <div class="editor-item-row ${v.id === state.txSelectedId ? 'is-selected' : ''}" data-id="${v.id}">
+          <div class="editor-item-row-title">${escapeHtml(v.title || v.id)}</div>
+          <div class="editor-item-row-meta">${escapeHtml(v.id)}</div>
+        </div>`).join('');
+      list.querySelectorAll('.editor-item-row').forEach(el =>
+        el.addEventListener('click', () => selectTranscriptVideo(el.dataset.id)));
+    } catch (e) { list.innerHTML = `<em>Ошибка: ${escapeHtml(e.message)}</em>`; }
+  }
+
+  async function selectTranscriptVideo(id) {
+    state.txSelectedId = id;
+    $('tx-empty').style.display = 'none';
+    $('tx-item').style.display = 'block';
+    $('tx-title').textContent = 'Загружаю…';
+    $('tx-preview').innerHTML = '';
+    try {
+      const t = await fetchJSON(`/videos/${id}/transcript`);
+      state.txOriginal = t.original_md;
+      $('tx-title').textContent = t.title || id;
+      $('tx-meta').textContent = `оригинал ${t.original_chars} симв · версий ${t.versions}`;
+      await loadTranscriptVersions(id);
+      showTranscript('current');
+      renderTranscriptActions();
+    } catch (e) { $('tx-title').textContent = 'Ошибка: ' + e.message; }
+  }
+
+  async function loadTranscriptVersions(id) {
+    state.txVersions = await fetchJSON(`/videos/${id}/transcript/edits`);
+    renderTranscriptVersions();
+  }
+
+  function currentTranscriptText() {
+    return state.txVersions.length ? state.txVersions[0].content_md : state.txOriginal;
+  }
+
+  function showTranscript(which) {
+    state.txShowing = which;
+    const on = (b, active) => {
+      if (!b) return;
+      b.style.background = active ? 'var(--ink)' : 'white';
+      b.style.color = active ? 'white' : 'var(--ink)';
+    };
+    on($('tx-show-current'), which === 'current');
+    on($('tx-show-original'), which === 'original');
+    $('tx-text').textContent = which === 'original' ? state.txOriginal : currentTranscriptText();
+  }
+
+  function renderTranscriptVersions() {
+    const box = $('tx-versions');
+    if (!state.txVersions.length) { box.innerHTML = '<em>Версий пока нет — это оригинал.</em>'; return; }
+    box.innerHTML = '<div class="editor-items-meta">версии</div>' + state.txVersions.map(v => `
+      <div style="display:flex; gap:10px; align-items:center; padding:4px 0; font-size:12px;">
+        <span>v${v.version} · ${escapeHtml(v.op)} · ${v.input_chars} симв</span>
+        <button type="button" data-roll="${v.version}" style="cursor:pointer;">откатить</button>
+        <a href="/videos/${state.txSelectedId}/transcript/edits/${v.version}.md" target="_blank">.md</a>
+        <a href="/videos/${state.txSelectedId}/transcript/edits/${v.version}.pdf" target="_blank">.pdf</a>
+      </div>`).join('');
+    box.querySelectorAll('[data-roll]').forEach(el =>
+      el.addEventListener('click', () => rollbackTranscript(Number(el.dataset.roll))));
+  }
+
+  async function rollbackTranscript(version) {
+    await fetchJSON(`/videos/${state.txSelectedId}/transcript/edits/${version}/rollback`, { method: 'POST' });
+    await loadTranscriptVersions(state.txSelectedId);
+    showTranscript('current');
+  }
+
+  function renderTranscriptActions() {
+    $('tx-actions').innerHTML = `
+      <div class="editor-actions-bar">
+        <button type="button" data-op="improve">улучшить интерпретацию</button>
+        <button type="button" data-op="structure">структурировать</button>
+        <button type="button" data-op="clean">почистить</button>
+      </div>
+      <input id="tx-instruction" type="text" placeholder="ТЗ / инструкция (необязательно)"
+             style="width:100%; margin:8px 0; padding:6px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px;">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+        <label style="font-size:12px; color:var(--mute);">модель:</label>
+        <select id="tx-model" style="font-size:12px; padding:4px 8px;"></select>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <input id="tx-chat-input" type="text" placeholder="чат: что сделать с текстом…"
+               style="flex:1; padding:6px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px;">
+        <button type="button" id="tx-chat-send" style="cursor:pointer; padding:6px 14px;">→</button>
+      </div>`;
+    const sel = $('tx-model');
+    sel.innerHTML = '<option value="claude-sonnet-4-6">claude-sonnet-4-6</option>';
+    fetchJSON('/local-llm/models').then(d => {
+      (d.models || []).forEach(m => {
+        const o = document.createElement('option'); o.value = m.name; o.textContent = m.name; sel.appendChild(o);
+      });
+    }).catch(() => {});
+    $('tx-actions').querySelectorAll('[data-op]').forEach(el =>
+      el.addEventListener('click', () => runTranscriptEdit(el.dataset.op, $('tx-instruction').value)));
+    $('tx-chat-send').addEventListener('click', () =>
+      runTranscriptEdit('chat', $('tx-chat-input').value));
+  }
+
+  // Minimal line-level diff via LCS -> [{t:' '|'+'|'-', line}]
+  function lineDiff(a, b) {
+    const A = a.split('\n'), B = b.split('\n');
+    const n = A.length, m = B.length;
+    const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+    for (let i = n - 1; i >= 0; i--)
+      for (let j = m - 1; j >= 0; j--)
+        dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    const out = []; let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (A[i] === B[j]) { out.push({ t: ' ', line: A[i] }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: '-', line: A[i] }); i++; }
+      else { out.push({ t: '+', line: B[j] }); j++; }
+    }
+    while (i < n) out.push({ t: '-', line: A[i++] });
+    while (j < m) out.push({ t: '+', line: B[j++] });
+    return out;
+  }
+
+  function renderDiffHtml(oldText, newText) {
+    return lineDiff(oldText, newText).map(d => {
+      const style = d.t === '+' ? 'background:#f0fdf4;color:#166534;'
+                  : d.t === '-' ? 'background:#fef2f2;color:#b91c1c;'
+                  : 'color:var(--mute);';
+      return `<div style="${style}">${escapeHtml(d.t + ' ' + d.line)}</div>`;
+    }).join('');
+  }
+
+  async function runTranscriptEdit(op, instruction) {
+    const id = state.txSelectedId;
+    if (!id) return;
+    const baseVersion = state.txVersions.length ? state.txVersions[0].version : null;
+    const model = $('tx-model').value;
+    const box = $('tx-preview');
+    box.innerHTML = '<div class="editor-preview-loading">Генерирую…</div>';
+
+    let proposed = '';
+    try {
+      const resp = await fetch(`/videos/${id}/transcript/edit`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ op, instruction, model, base_version: baseVersion }),
+      });
+      if (!resp.ok) throw new Error(`${resp.status} ${await resp.text()}`);
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      box.innerHTML = '<pre id="tx-proposed" class="tx-text" style="white-space:pre-wrap; font-family:inherit; font-size:13px; line-height:1.55; max-height:340px; overflow-y:auto; background:var(--panel); padding:14px; border-radius:8px;"></pre>';
+      const out = $('tx-proposed');
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const chunks = buf.split('\n\n'); buf = chunks.pop();
+        for (const chunk of chunks) {
+          if (!chunk.startsWith('data: ')) continue;
+          let ev; try { ev = JSON.parse(chunk.slice(6)); } catch (_) { continue; }
+          if (ev.type === 'delta') { proposed += ev.text; out.textContent = proposed; }
+          else if (ev.type === 'error') throw new Error(ev.msg);
+        }
+      }
+      const bar = document.createElement('div');
+      bar.className = 'editor-preview-actions';
+      bar.style.cssText = 'display:flex; gap:8px; margin-top:8px;';
+      bar.innerHTML = `<button type="button" data-role="apply">✓ применить (новая версия)</button>
+                       <button type="button" data-role="diff">показать дифф</button>
+                       <button type="button" data-role="cancel">✕ отмена</button>`;
+      box.appendChild(bar);
+      bar.querySelector('[data-role="cancel"]').onclick = () => { box.innerHTML = ''; };
+      bar.querySelector('[data-role="apply"]').onclick = () =>
+        applyTranscriptEdit({ op, instruction, content_md: proposed, model, from_version: baseVersion });
+      let showingDiff = false;
+      bar.querySelector('[data-role="diff"]').onclick = (ev) => {
+        showingDiff = !showingDiff;
+        ev.target.textContent = showingDiff ? 'показать текст' : 'показать дифф';
+        if (showingDiff) out.innerHTML = renderDiffHtml(currentTranscriptText(), proposed);
+        else out.textContent = proposed;
+      };
+    } catch (e) {
+      box.innerHTML = `<div class="editor-preview-error">Ошибка: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function applyTranscriptEdit(payload) {
+    const id = state.txSelectedId;
+    await fetchJSON(`/videos/${id}/transcript/edits/apply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    $('tx-preview').innerHTML = '<div class="editor-preview-ok">✓ Применено</div>';
+    await loadTranscriptVersions(id);
+    showTranscript('current');
+  }
+
   // ── Wire filters + actions ─────────────────────────────────────────
 
   function wire() {
@@ -336,12 +557,19 @@
     document.querySelectorAll('.editor-actions-bar button[data-tool]').forEach(btn => {
       btn.addEventListener('click', () => runTool(btn.dataset.tool));
     });
+
+    // Source toggle (News | Transcripts) + transcript view toggle.
+    $('editor-src-news').addEventListener('click', () => setSource('news'));
+    $('editor-src-transcripts').addEventListener('click', () => setSource('transcripts'));
+    $('tx-show-current').addEventListener('click', () => showTranscript('current'));
+    $('tx-show-original').addEventListener('click', () => showTranscript('original'));
   }
 
   async function bootstrap() {
     if (state.loaded) return;
     state.loaded = true;
     wire();
+    setSource('news');  // sets initial active styling on the toggle
     await Promise.all([loadStreams(), loadItems(), loadAllSessionsHistory(), loadDefaults()]);
   }
 
@@ -352,6 +580,12 @@
     new MutationObserver(trigger).observe(section, { attributes: true, attributeFilter: ['style', 'class'] });
     trigger();
   }
+
+  // Deep-link entry point for the "подробнее" button on the Видео tab.
+  // bootstrap() runs lazily when the editor section first becomes visible.
+  window.editorSelectVideo = (id) => {
+    bootstrap().then(() => { setSource('transcripts'); selectTranscriptVideo(id); });
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
