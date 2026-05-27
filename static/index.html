@@ -2494,7 +2494,7 @@
       <span style="font-size: 18px;">🦙</span>
       <div style="flex: 1;">
         <div style="font-size: 14px; font-weight: 600; color: var(--ink);"
-             x-text="{ spec: 'Расширить в ТЗ', research: 'Подготовить ресерч', report: 'Составить репорт' }[specExpand.mode] || 'Расширить'"></div>
+             x-text="{ spec: 'Расширить в ТЗ', research: 'Подготовить ресерч', report: 'Составить репорт', ai_skills: 'Спроектировать AI-скиллы', ai_algorithms: 'Описать алгоритмы для AI' }[specExpand.mode] || 'Расширить'"></div>
         <div style="font-size: 11px; color: var(--mute);" x-text="'из секции: ' + specExpand.sourceTitle"></div>
       </div>
       <button @click="closeExpandSpec()" class="text-ink-500 hover:text-ink text-[13px]">✕</button>
@@ -2514,8 +2514,16 @@
                 title="Глубокое аналитическое исследование: тезисы, факты, слабые места, открытые вопросы">🔬 ресерч</button>
         <button @click="specExpand.mode = 'report'" type="button"
                 :style="specExpand.mode === 'report' ? 'background: var(--ink); color: white;' : 'background: white; color: var(--ink);'"
-                class="px-2.5 py-1 text-[12px]"
+                class="px-2.5 py-1 text-[12px] border-r border-ink-200"
                 title="Executive-репорт: TL;DR, выводы, метрики, action items">📊 репорт</button>
+        <button @click="specExpand.mode = 'ai_skills'" type="button"
+                :style="specExpand.mode === 'ai_skills' ? 'background: var(--ink); color: white;' : 'background: white; color: var(--ink);'"
+                class="px-2.5 py-1 text-[12px] border-r border-ink-200"
+                title="Возможные AI-скиллы: что ИИ умеет, какие данные смотрит, что сравнивает, по каким правилам решает">🤖 AI-скиллы</button>
+        <button @click="specExpand.mode = 'ai_algorithms'" type="button"
+                :style="specExpand.mode === 'ai_algorithms' ? 'background: var(--ink); color: white;' : 'background: white; color: var(--ink);'"
+                class="px-2.5 py-1 text-[12px]"
+                title="Алгоритмы действий для AI: пошаговый порядок — что взять, что сравнить, что проверить, какой вывод">⚙️ алгоритмы</button>
       </div>
       <div style="flex: 1;"></div>
     </div>

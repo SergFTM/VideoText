@@ -470,14 +470,21 @@ def local_llm_models() -> dict:
     }
 
 
+# Output mode — which deliverable the local model should produce. Defined once
+# and reused by the expand request body AND the expansion-accessor routes so the
+# allowed set never drifts between writing and reading an expansion.
+#   "spec"          → expanded technical specification (default for spec section)
+#   "research"      → analytical research report (default for non-spec sections)
+#   "report"        → executive summary / action-item report
+#   "ai_skills"     → reusable AI-skill definitions derived from the material
+#   "ai_algorithms" → step-by-step action algorithms for an AI agent
+ExpandMode = Literal["spec", "research", "report", "ai_skills", "ai_algorithms"]
+
+
 class ExpandSpecRequest(BaseModel):
     section_md: str                # body of the section the user clicked
     section_title: str = "Черновик ТЗ"  # heading that was above section_md
-    # Output mode — which deliverable the model should produce:
-    #   "spec"     → expanded technical specification (default for spec section)
-    #   "research" → analytical research report (default for non-spec sections)
-    #   "report"   → executive summary / action-item report
-    mode: Literal["spec", "research", "report"] = "spec"
+    mode: ExpandMode = "spec"
     model: str | None = None
     # Context source: which parts of the video go into the prompt.
     context: Literal["brief", "transcript", "both"] | None = None
@@ -610,23 +617,22 @@ def read_expansions(video_id: str) -> list[dict]:
     return [_expansion_to_dict(e) for e in rows]
 
 
-@app.get("/videos/{video_id}/expansions/{mode}")
-def read_expansion(video_id: str, mode: Literal["spec", "research", "report"]) -> dict:
-    e = get_expansion(video_id, mode)
-    if not e:
-        raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
-    return _expansion_to_dict(e)
-
-
+# NOTE: the `.pdf` route MUST be declared before the bare `{mode}` route.
+# A path param matches dots, so `{mode}` would otherwise capture "spec.pdf"
+# and shadow this route (Starlette matches in declaration order).
 @app.get("/videos/{video_id}/expansions/{mode}.pdf")
-def export_expansion_pdf(video_id: str, mode: Literal["spec", "research", "report"]):
+def export_expansion_pdf(video_id: str, mode: ExpandMode):
     """Render a saved expansion as a PDF. Available for all modes, but the UI
-    only surfaces the button for research/report (ТЗ stays markdown for Cursor)."""
+    only surfaces the button for research/report (ТЗ / AI-артефакты остаются
+    markdown — их скармливают обратно в Cursor/Claude)."""
     from export import markdown_to_pdf
     e = get_expansion(video_id, mode)
     if not e:
         raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
-    title_map = {"spec": "Расширенное ТЗ", "research": "Исследование", "report": "Репорт"}
+    title_map = {
+        "spec": "Расширенное ТЗ", "research": "Исследование", "report": "Репорт",
+        "ai_skills": "AI-скиллы", "ai_algorithms": "Алгоритмы для AI",
+    }
     title = f"{title_map.get(mode, 'Расширение')}: {e.sourceTitle}"
     pdf_bytes = markdown_to_pdf(e.contentMd, title=title)
     filename = f"{mode}-{video_id}.pdf"
@@ -635,6 +641,14 @@ def export_expansion_pdf(video_id: str, mode: Literal["spec", "research", "repor
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/videos/{video_id}/expansions/{mode}")
+def read_expansion(video_id: str, mode: ExpandMode) -> dict:
+    e = get_expansion(video_id, mode)
+    if not e:
+        raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
+    return _expansion_to_dict(e)
 
 
 # ─── Pipeline ─────────────────────────────────────────────────────
