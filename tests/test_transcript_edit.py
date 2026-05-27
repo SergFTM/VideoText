@@ -44,3 +44,37 @@ def test_is_claude_recognises_claude_ids_and_aliases():
     assert te._is_claude("")              # empty -> default Claude
     assert not te._is_claude("qwen2.5:7b")
     assert not te._is_claude("nomic-embed-text:latest")
+
+
+import pytest
+import store
+
+
+@pytest.mark.asyncio
+async def test_version_numbering_and_rollback(db):
+    # Seed a video (FK target for TranscriptEdit).
+    await db.video.create(data={"id": "vid1", "url": "u", "source": "test"})
+
+    v1 = await store._create_transcript_edit(
+        video_id="vid1", content_md="text v1", op="improve",
+        instruction="", from_version=None, model="claude-sonnet-4-6",
+        input_chars=10, elapsed_ms=5,
+    )
+    assert v1.version == 1
+
+    v2 = await store._create_transcript_edit(
+        video_id="vid1", content_md="text v2", op="structure",
+        instruction="разбей", from_version=1, model="claude-sonnet-4-6",
+        input_chars=12, elapsed_ms=6,
+    )
+    assert v2.version == 2
+
+    versions = await store._list_transcript_edits("vid1")
+    assert [r.version for r in versions] == [2, 1]  # newest first
+
+    # Rollback to v1 -> new v3 cloned from v1.
+    v3 = await store._rollback_transcript_edit("vid1", 1)
+    assert v3.version == 3
+    assert v3.contentMd == "text v1"
+    assert v3.op == "rollback"
+    assert v3.fromVersion == 1

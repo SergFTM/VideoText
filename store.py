@@ -607,6 +607,89 @@ def list_expansions(video_id: str):
     return asyncio.run(_list_expansions(video_id))
 
 
+# ─── Transcript edits (version history) ────────────────────────────
+
+async def _create_transcript_edit(
+    *, video_id: str, content_md: str, op: str, instruction: str,
+    from_version: int | None, model: str, input_chars: int, elapsed_ms: int,
+):
+    db = Prisma()
+    await db.connect()
+    try:
+        last = await db.transcriptedit.find_first(
+            where={"videoId": video_id}, order={"version": "desc"},
+        )
+        version = (last.version + 1) if last else 1
+        return await db.transcriptedit.create(data={
+            "videoId": video_id, "version": version, "contentMd": content_md,
+            "op": op, "instruction": instruction, "fromVersion": from_version,
+            "model": model, "inputChars": input_chars, "elapsedMs": elapsed_ms,
+        })
+    finally:
+        await db.disconnect()
+
+
+async def _list_transcript_edits(video_id: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.transcriptedit.find_many(
+            where={"videoId": video_id}, order={"version": "desc"},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _get_transcript_edit(video_id: str, version: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.transcriptedit.find_unique(
+            where={"videoId_version": {"videoId": video_id, "version": version}},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _rollback_transcript_edit(video_id: str, version: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        src = await db.transcriptedit.find_unique(
+            where={"videoId_version": {"videoId": video_id, "version": version}},
+        )
+        if not src:
+            return None
+        last = await db.transcriptedit.find_first(
+            where={"videoId": video_id}, order={"version": "desc"},
+        )
+        new_version = (last.version + 1) if last else 1
+        return await db.transcriptedit.create(data={
+            "videoId": video_id, "version": new_version, "contentMd": src.contentMd,
+            "op": "rollback", "instruction": f"откат к v{version}",
+            "fromVersion": version, "model": src.model,
+            "inputChars": 0, "elapsedMs": 0,
+        })
+    finally:
+        await db.disconnect()
+
+
+def create_transcript_edit(**kwargs):
+    return asyncio.run(_create_transcript_edit(**kwargs))
+
+
+def list_transcript_edits(video_id: str):
+    return asyncio.run(_list_transcript_edits(video_id))
+
+
+def get_transcript_edit(video_id: str, version: int):
+    return asyncio.run(_get_transcript_edit(video_id, version))
+
+
+def rollback_transcript_edit(video_id: str, version: int):
+    return asyncio.run(_rollback_transcript_edit(video_id, version))
+
+
 # ─── Stream briefs ─────────────────────────────────────────────────
 
 async def _save_stream_brief(
