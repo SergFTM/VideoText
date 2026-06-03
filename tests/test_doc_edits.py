@@ -91,3 +91,17 @@ def test_assemble_essence_section_included_when_present():
     assert server._essence_section("") == ""
     block = server._essence_section("ядро материала")
     assert "Суть" in block and "ядро материала" in block
+
+
+def test_seed_inputs_ok_strips_each_source_before_or():
+    # The bug guarded against: ("   " or "content").strip() short-circuits to
+    # the whitespace-only first operand, falsely rejecting a real second source.
+    assert server._seed_inputs_ok("", "") is False
+    assert server._seed_inputs_ok("   ", "") is False
+    assert server._seed_inputs_ok("", "  \n  ") is False
+    assert server._seed_inputs_ok("   ", "real brief") is True   # the bug case
+    assert server._seed_inputs_ok("real transcript", "") is True
+    assert server._seed_inputs_ok("tx", "br") is True
+    # Defensive against `None` (defaults on missing keys).
+    assert server._seed_inputs_ok(None, None) is False
+    assert server._seed_inputs_ok(None, "x") is True

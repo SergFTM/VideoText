@@ -775,6 +775,13 @@ def _essence_section(essence_md: str) -> str:
     return f"## Суть\n{essence_md}\n\n" if essence_md else ""
 
 
+def _seed_inputs_ok(transcript_text: str, brief_md: str) -> bool:
+    """True iff at least one source has non-whitespace content. The strip() must
+    happen BEFORE the `or` — `("   " or br).strip()` short-circuits to the
+    whitespace-only first operand and falsely rejects a non-empty brief."""
+    return bool((transcript_text or "").strip() or (brief_md or "").strip())
+
+
 @app.get("/videos/{video_id}/transcript")
 def read_transcript(video_id: str) -> dict:
     text, v = _original_transcript_text(video_id)
@@ -989,7 +996,7 @@ def doc_edit_preview(video_id: str, kind: str, req: DocEditRequest):
     if kind == "essence" and req.op == "seed":
         tx = _current_doc_text(video_id, "transcript")
         br = _current_doc_text(video_id, "brief")
-        if not (tx or br).strip():
+        if not _seed_inputs_ok(tx, br):
             raise HTTPException(status_code=400, detail="Нет исходного текста для сути")
         system, user = transcript_edit.build_seed_prompt(transcript_text=tx, brief_md=br)
     else:
