@@ -675,7 +675,7 @@
     const v = state.afVideos.find(x => x.id === id);
     $('af-title').textContent = v ? (v.title || id) : id;
     const sel = $('af-model');
-    sel.innerHTML = '';
+    sel.innerHTML = '<option value="claude-sonnet-4-6">claude-sonnet-4-6</option>';
     fetchJSON('/local-llm/models').then(d => {
       (d.models || []).forEach(m => {
         const o = document.createElement('option'); o.value = m.name; o.textContent = m.name; sel.appendChild(o);

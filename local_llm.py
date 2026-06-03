@@ -52,6 +52,13 @@ def stream_chat(
     entanglement. Caller decides how to ship deltas downstream (SSE, websocket,
     join-and-return, etc).
     """
+    # Claude fallback: a model id like "claude-sonnet-4-6" routes to Anthropic
+    # via the dispatcher already in transcript_edit.py. Lazy import avoids the
+    # circular dependency (transcript_edit imports local_llm).
+    import transcript_edit
+    if transcript_edit._is_claude(model):
+        yield from transcript_edit._stream_claude(system, user, model)
+        return
     payload = json.dumps({
         "model": model,
         "stream": True,
