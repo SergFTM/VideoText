@@ -438,11 +438,16 @@
     }
 
     // Essence with no source and no edits → offer a single "seed" button.
+    // Preview + versions containers MUST exist too: runDocEdit() writes the
+    // streaming preview into `doc-${kind}-preview`, and after apply we reload
+    // and re-render the block (so the empty `doc-${kind}-versions` is fine).
     if (kind === 'essence' && !d.hasOriginal && !d.versions.length) {
       box.innerHTML = heading +
         `<div class="editor-actions-bar" style="margin:6px 0;">
            <button type="button" data-seed="1">${escapeHtml(t('editor.docs.seed'))}</button>
-         </div>`;
+         </div>
+         <div id="doc-${kind}-preview" style="margin-top:12px;"></div>
+         <div id="doc-${kind}-versions" style="margin-top:14px;"></div>`;
       box.querySelector('[data-seed]').addEventListener('click', () => runDocEdit(kind, 'seed', ''));
       return;
     }
@@ -814,7 +819,7 @@
     const w = $('af-warning');
     if (pred && !gateClosed(pred)) {
       w.style.display = 'block';
-      w.textContent = `⚠ Рекомендуется сначала закрыть этап «${AF_LABEL[pred]}» (чеклист не пройден) — но сгенерировать можно.`;
+      w.textContent = `⚠ «${AF_LABEL[pred]}» сгенерирован, но его чек-лист готовности ещё не пройден — сгенерировать дальше можно, но лучше сначала проверить через «AI-оценка» внизу.`;
     } else { w.style.display = 'none'; }
     $('af-hint').textContent = AF_HINT[stage] || '';
   }
