@@ -25,12 +25,14 @@ model Video {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  segments        Segment[]
-  briefs          Brief[]
-  runs            Run[]
-  expansions      Expansion[]
-  transcriptEdits TranscriptEdit[]
-  stageGates      StageGate[]
+  segments         Segment[]
+  briefs           Brief[]
+  runs             Run[]
+  expansions       Expansion[]
+  transcriptEdits  TranscriptEdit[]
+  transcriptDrafts TranscriptDraft[]
+  screenshots      Screenshot[]
+  stageGates       StageGate[]
 }
 
 // Local-LLM-generated expansions of brief sections: ТЗ, ресерч, репорт.
@@ -105,6 +107,45 @@ model TranscriptEdit {
   createdAt   DateTime @default(now())
 
   @@unique([videoId, kind, version])
+}
+
+// Unsaved AI generation for a doc block, persisted the moment tokens are spent
+// so a browser refresh restores the pending preview instead of re-generating
+// (and re-spending tokens). One draft per (video, kind) — a new generation
+// UPSERTs it. Cleared when the user applies it (→ TranscriptEdit) or cancels.
+model TranscriptDraft {
+  id          Int      @id @default(autoincrement())
+  videoId     String
+  video       Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  kind        String // "transcript" | "brief" | "essence"
+  contentMd   String // the generated full document text
+  op          String // which op produced it (e.g. "expand_idea", "seed")
+  instruction String   @default("")
+  fromVersion Int? // base version the generation grew from (null = original)
+  model       String
+  elapsedMs   Int      @default(0)
+  updatedAt   DateTime @updatedAt
+
+  @@unique([videoId, kind])
+}
+
+// Screenshot-references: video frames grabbed at moments where the transcript
+// describes something shown on screen (a terminal, a service's UI/config), so a
+// ТЗ can carry visual proof. Detected by an LLM pass over the segments; the
+// frame is pulled from a low-res video-only download via ffmpeg.
+model Screenshot {
+  id           Int      @id @default(autoincrement())
+  videoId      String
+  video        Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  timestamp    Float // seconds into the video
+  segmentIndex Int? // transcript segment that triggered it (null = unmapped)
+  filePath     String // ./images/shot-<videoId>-<ts>.jpg
+  caption      String // what is shown at this moment
+  reason       String   @default("") // why it's a useful reference for a ТЗ
+  model        String   @default("") // detector model id
+  createdAt    DateTime @default(now())
+
+  @@index([videoId])
 }
 
 // Layer 3 — readiness-checklist state per (video, stage). AI-assessed + user overrides.

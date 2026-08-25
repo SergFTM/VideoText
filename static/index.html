@@ -79,7 +79,7 @@
   <script src="/static/assistant-panel.js?v=11"></script>
   <script src="/static/app.js?v=13"></script>
   <script src="/static/editor-inline.js"></script>
-  <script src="/static/editor-workspace.js?v=6"></script>
+  <script src="/static/editor-workspace.js?v=8"></script>
 </head>
 <body class="font-sans bg-bg text-ink antialiased" :lang="lang">
 <a href="#main-content" class="sr-skip" x-text="t('a11y.skip_to_content')">К содержимому</a>
@@ -224,7 +224,10 @@
         <span x-text="t('label.model').toLowerCase()"></span>
         <select x-model="form.model" class="vt-select-mini">
           <option value="">sonnet-4.6</option>
-          <option value="opus">opus-4.7</option>
+          <option value="opus5">opus-5</option>
+          <option value="opus48">opus-4.8</option>
+          <option value="opus47">opus-4.7</option>
+          <option value="sonnet5">sonnet-5</option>
           <option value="sonnet">sonnet-4.6</option>
           <option value="haiku">haiku-4.5</option>
         </select>
@@ -1515,6 +1518,7 @@
         <div id="doc-block-transcript" class="doc-block"></div>
         <div id="doc-block-brief" class="doc-block"></div>
         <div id="doc-block-essence" class="doc-block"></div>
+        <div id="tx-screenshots" class="doc-block"></div>
         <div class="doc-pipeline-note" data-i18n="editor.docs.pipelineNote"
              style="margin-top:18px; padding-top:12px; border-top:1px dashed var(--line); color:var(--mute); font-size:13px;">
           ▸ Этот набор → вход для ТЗ / Алгоритмов / AI-скиллов
@@ -2016,8 +2020,10 @@
         <span class="text-[13px] text-ink-600">модель Claude для видео</span>
         <select x-model="settings.default_brief_model" class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
           <option value="">автоматически (env / sonnet-4.6)</option>
+          <option value="claude-opus-5">claude-opus-5</option>
+          <option value="claude-opus-4-8">claude-opus-4-8</option>
           <option value="claude-opus-4-7">claude-opus-4-7</option>
-          <option value="claude-opus-4-6">claude-opus-4-6</option>
+          <option value="claude-sonnet-5">claude-sonnet-5</option>
           <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
           <option value="claude-haiku-4-5">claude-haiku-4-5</option>
         </select>

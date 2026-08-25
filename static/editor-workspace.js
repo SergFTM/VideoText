@@ -8,6 +8,16 @@
  *   - pendingPreview: null | {field, old, new, diff, tool_call_id, item_id, ...}
  */
 (function () {
+  // Claude models available on the API key. Strong tier first → opus-4-8 is the
+  // default selection for engineering-grade ТЗ / doc generation; sonnet/haiku
+  // stay available for lighter passes. Local Ollama models are appended after.
+  const CLAUDE_MODEL_OPTS =
+    '<option value="claude-opus-4-8">claude-opus-4-8</option>' +
+    '<option value="claude-opus-5">claude-opus-5</option>' +
+    '<option value="claude-sonnet-5">claude-sonnet-5</option>' +
+    '<option value="claude-sonnet-4-6">claude-sonnet-4-6</option>' +
+    '<option value="claude-haiku-4-5">claude-haiku-4-5</option>';
+
   const state = {
     loaded: false,
     selectedId: null,
@@ -387,6 +397,76 @@
     for (const kind of DOC_KINDS) {
       await loadDoc(id, kind);  // sequential keeps order + avoids hammering the backend
     }
+    renderScreenshots(id);
+  }
+
+  // ─── Screenshot-references ───────────────────────────────────────
+
+  async function renderScreenshots(id) {
+    const box = $('tx-screenshots');
+    if (!box || state.txSelectedId !== id) return;
+    let data;
+    try { data = await fetchJSON(`/videos/${id}/screenshots`); }
+    catch (_) { box.innerHTML = ''; return; }
+    if (state.txSelectedId !== id) return;
+
+    const shots = data.screenshots || [];
+    const running = data.running;
+    const heading = `<div class="editor-items-meta" style="font-size:13px; font-weight:600; margin-top:14px;">Визуальные референсы</div>`;
+    const btnLabel = running ? 'извлекаю…' : (shots.length ? 'обновить референсы' : 'извлечь референсы');
+    const controls = `
+      <div style="display:flex; gap:10px; align-items:center; margin:8px 0;">
+        <button type="button" id="tx-shots-extract" ${running ? 'disabled' : ''}
+                style="cursor:pointer; padding:6px 14px;">${btnLabel}</button>
+        <span style="font-size:12px; color:var(--mute);">
+          ${running ? 'скачиваю видео и режу кадры…' : 'кадры из видео на моментах, где показан экран (терминал, UI, конфиг)'}
+        </span>
+      </div>`;
+
+    const gallery = shots.length ? `
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; margin-top:8px;">
+        ${shots.map(s => `
+          <div style="border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--panel);">
+            <a href="${s.url}" target="_blank"><img src="${s.url}" style="width:100%; display:block; aspect-ratio:16/9; object-fit:cover;"></a>
+            <div style="padding:8px; font-size:12px;">
+              <div style="font-weight:600;">${escapeHtml(s.caption || '')}</div>
+              <div style="color:var(--mute); margin-top:2px;">${escapeHtml(s.reason || '')}</div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; color:var(--mute);">
+                <span>${fmtTime(s.timestamp)}</span>
+                <button type="button" data-shot-del="${s.id}" style="cursor:pointer; font-size:11px;">удалить</button>
+              </div>
+            </div>
+          </div>`).join('')}
+      </div>` : (running ? '' : '<div style="font-size:12px; color:var(--mute); margin-top:6px;">Референсов пока нет.</div>');
+
+    box.innerHTML = heading + controls + gallery;
+    const btn = box.querySelector('#tx-shots-extract');
+    if (btn && !running) btn.onclick = () => extractScreenshots(id);
+    box.querySelectorAll('[data-shot-del]').forEach(el =>
+      el.addEventListener('click', () => deleteScreenshot(id, Number(el.dataset.shotDel))));
+
+    if (running) setTimeout(() => renderScreenshots(id), 2500);  // poll until done
+  }
+
+  async function extractScreenshots(id) {
+    try {
+      await fetchJSON(`/videos/${id}/screenshots/extract`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+    } catch (_) {}
+    renderScreenshots(id);  // will show "извлекаю…" and start polling
+  }
+
+  async function deleteScreenshot(id, sid) {
+    try { await fetch(`/videos/${id}/screenshots/${sid}`, { method: 'DELETE' }); } catch (_) {}
+    renderScreenshots(id);
+  }
+
+  function fmtTime(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
   }
 
   // Fetch one doc (+ its edit versions), store into state.docs[kind], render.
@@ -449,17 +529,25 @@
          <div id="doc-${kind}-preview" style="margin-top:12px;"></div>
          <div id="doc-${kind}-versions" style="margin-top:14px;"></div>`;
       box.querySelector('[data-seed]').addEventListener('click', () => runDocEdit(kind, 'seed', ''));
+      restoreDocDraft(kind);  // a seeded-but-unapplied суть survives refresh
       return;
     }
 
     // Full editing controls (namespaced by kind).
     box.innerHTML = heading + `
       <div class="editor-items-meta">оригинал ${d.originalChars} симв · версий ${d.versions.length}</div>
-      <div class="tx-view-toggle" style="display:flex; gap:8px; margin:10px 0;">
+      <div class="tx-view-toggle" style="display:flex; gap:8px; margin:10px 0; align-items:center;">
         <button type="button" data-show="current"
                 style="padding:4px 12px; border:1px solid var(--line); border-radius:6px; font-size:12px; cursor:pointer;">улучшенный</button>
         <button type="button" data-show="original"
                 style="padding:4px 12px; border:1px solid var(--line); border-radius:6px; font-size:12px; cursor:pointer;">оригинал</button>
+        <span style="margin-left:auto; display:inline-flex; gap:6px; align-items:center;">
+          <span style="font-size:11px; color:var(--mute);">скачать:</span>
+          <a id="doc-${kind}-dl-pdf" href="#" download title="Скачать показанный текст в PDF"
+             style="padding:4px 10px; border:1px solid var(--line); border-radius:6px; font-size:12px; text-decoration:none; color:var(--ink);">PDF</a>
+          <a id="doc-${kind}-dl-md" href="#" download title="Скачать показанный текст в Markdown"
+             style="padding:4px 10px; border:1px solid var(--line); border-radius:6px; font-size:12px; text-decoration:none; color:var(--ink);">MD</a>
+        </span>
       </div>
       <pre id="doc-${kind}-text" class="tx-text" style="white-space:pre-wrap; font-family:inherit; font-size:13px; line-height:1.55; max-height:340px; overflow-y:auto; background:var(--panel); padding:14px; border-radius:8px;"></pre>
       <div class="editor-actions-bar" style="margin-top:8px;">
@@ -494,6 +582,13 @@
       on(box.querySelector('[data-show="original"]'), which === 'original');
       box.querySelector('#doc-' + kind + '-text').textContent =
         which === 'original' ? d.original : currentDocText(kind);
+      // Downloads follow the shown view (улучшенный → current, оригинал → original).
+      const q = which === 'original' ? 'original' : 'current';
+      const base = `/videos/${state.txSelectedId}/docs/${kind}/download`;
+      const pdf = box.querySelector('#doc-' + kind + '-dl-pdf');
+      const md = box.querySelector('#doc-' + kind + '-dl-md');
+      if (pdf) pdf.href = `${base}.pdf?which=${q}`;
+      if (md) md.href = `${base}.md?which=${q}`;
     };
     box.querySelectorAll('[data-show]').forEach(el =>
       el.addEventListener('click', () => { d.showing = el.dataset.show; showText(); }));
@@ -501,7 +596,7 @@
 
     // Model dropdown.
     const sel = box.querySelector('#doc-' + kind + '-model');
-    sel.innerHTML = '<option value="claude-sonnet-4-6">claude-sonnet-4-6</option>';
+    sel.innerHTML = CLAUDE_MODEL_OPTS;
     fetchJSON('/local-llm/models').then(data => {
       (data.models || []).forEach(m => {
         const o = document.createElement('option'); o.value = m.name; o.textContent = m.name; sel.appendChild(o);
@@ -516,6 +611,7 @@
       runDocEdit(kind, 'chat', box.querySelector('#doc-' + kind + '-chat').value));
 
     renderDocVersions(kind);
+    restoreDocDraft(kind);  // bring back any unsaved generation after a refresh
   }
 
   function renderDocVersions(kind) {
@@ -546,7 +642,7 @@
     if (!id) return;
     const baseVersion = op === 'seed' ? null : latestVersion(kind);
     const modelSel = $('doc-' + kind + '-model');
-    const model = modelSel ? modelSel.value : 'claude-sonnet-4-6';
+    const model = modelSel ? modelSel.value : 'claude-opus-4-8';
     const box = $('doc-' + kind + '-preview');
     box.innerHTML = '<div class="editor-preview-loading">Генерирую…</div>';
 
@@ -574,26 +670,72 @@
           else if (ev.type === 'error') throw new Error(ev.msg);
         }
       }
-      const bar = document.createElement('div');
-      bar.className = 'editor-preview-actions';
-      bar.style.cssText = 'display:flex; gap:8px; margin-top:8px;';
-      bar.innerHTML = `<button type="button" data-role="apply">✓ применить (новая версия)</button>
-                       <button type="button" data-role="diff">показать дифф</button>
-                       <button type="button" data-role="cancel">✕ отмена</button>`;
-      box.appendChild(bar);
-      bar.querySelector('[data-role="cancel"]').onclick = () => { box.innerHTML = ''; };
-      bar.querySelector('[data-role="apply"]').onclick = () =>
-        applyDocEdit(kind, { op, instruction, content_md: proposed, model, from_version: baseVersion });
-      let showingDiff = false;
-      bar.querySelector('[data-role="diff"]').onclick = (ev) => {
-        showingDiff = !showingDiff;
-        ev.target.textContent = showingDiff ? 'показать текст' : 'показать дифф';
-        if (showingDiff) out.innerHTML = renderDiffHtml(currentDocText(kind), proposed);
-        else out.textContent = proposed;
-      };
+      // Generation done + persisted server-side as a draft; render the final
+      // preview (with apply/diff/cancel + draft downloads).
+      renderDocPreview(kind, proposed,
+        { op, instruction, from_version: baseVersion, model, restored: false });
     } catch (e) {
       box.innerHTML = `<div class="editor-preview-error">Ошибка: ${escapeHtml(e.message)}</div>`;
     }
+  }
+
+  // Render the pending-generation preview: proposed text + apply/diff/cancel +
+  // PDF·MD download of the saved draft. Shared by the fresh-generation path and
+  // the after-refresh restore path (meta.restored shows a "no tokens spent" note).
+  function renderDocPreview(kind, proposed, meta) {
+    const box = $('doc-' + kind + '-preview');
+    if (!box) return;
+    const id = state.txSelectedId;
+    const note = meta.restored
+      ? `<div style="font-size:12px; color:var(--mute); margin-bottom:6px;">↩︎ черновик восстановлен — токены не потрачены</div>`
+      : '';
+    box.innerHTML = note +
+      `<pre id="doc-${kind}-proposed" class="tx-text" style="white-space:pre-wrap; font-family:inherit; font-size:13px; line-height:1.55; max-height:340px; overflow-y:auto; background:var(--panel); padding:14px; border-radius:8px;"></pre>`;
+    const out = $('doc-' + kind + '-proposed');
+    out.textContent = proposed;
+
+    const bar = document.createElement('div');
+    bar.className = 'editor-preview-actions';
+    bar.style.cssText = 'display:flex; gap:8px; margin-top:8px; align-items:center;';
+    const dlStyle = 'padding:4px 10px; border:1px solid var(--line); border-radius:6px; font-size:12px; text-decoration:none; color:var(--ink);';
+    bar.innerHTML = `<button type="button" data-role="apply">✓ применить (новая версия)</button>
+                     <button type="button" data-role="diff">показать дифф</button>
+                     <button type="button" data-role="cancel">✕ отмена</button>
+                     <span style="margin-left:auto; display:inline-flex; gap:6px; align-items:center;">
+                       <span style="font-size:11px; color:var(--mute);">скачать:</span>
+                       <a href="/videos/${id}/docs/${kind}/draft/download.pdf" download style="${dlStyle}">PDF</a>
+                       <a href="/videos/${id}/docs/${kind}/draft/download.md" download style="${dlStyle}">MD</a>
+                     </span>`;
+    box.appendChild(bar);
+
+    bar.querySelector('[data-role="cancel"]').onclick = async () => {
+      box.innerHTML = '';
+      try { await fetch(`/videos/${id}/docs/${kind}/draft`, { method: 'DELETE' }); } catch (_) {}
+    };
+    bar.querySelector('[data-role="apply"]').onclick = () =>
+      applyDocEdit(kind, { op: meta.op, instruction: meta.instruction,
+        content_md: proposed, model: meta.model, from_version: meta.from_version });
+    let showingDiff = false;
+    bar.querySelector('[data-role="diff"]').onclick = (ev) => {
+      showingDiff = !showingDiff;
+      ev.target.textContent = showingDiff ? 'показать текст' : 'показать дифф';
+      if (showingDiff) out.innerHTML = renderDiffHtml(currentDocText(kind), proposed);
+      else out.textContent = proposed;
+    };
+  }
+
+  // After (re)rendering a doc block, restore any unsaved generation from the DB
+  // so a browser refresh doesn't lose it (and doesn't re-spend tokens).
+  async function restoreDocDraft(kind) {
+    const id = state.txSelectedId;
+    if (!id) return;
+    try {
+      const d = await fetchJSON(`/videos/${id}/docs/${kind}/draft`);
+      if (d && d.content_md) {
+        renderDocPreview(kind, d.content_md, { op: d.op, instruction: d.instruction,
+          from_version: d.from_version, model: d.model, restored: true });
+      }
+    } catch (_) {}
   }
 
   async function applyDocEdit(kind, payload) {
@@ -680,7 +822,7 @@
     const v = state.afVideos.find(x => x.id === id);
     $('af-title').textContent = v ? (v.title || id) : id;
     const sel = $('af-model');
-    sel.innerHTML = '<option value="claude-sonnet-4-6">claude-sonnet-4-6</option>';
+    sel.innerHTML = CLAUDE_MODEL_OPTS;
     fetchJSON('/local-llm/models').then(d => {
       (d.models || []).forEach(m => {
         const o = document.createElement('option'); o.value = m.name; o.textContent = m.name; sel.appendChild(o);

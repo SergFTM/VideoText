@@ -32,7 +32,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, HttpUrl
+import re                                # noqa: E402
+from pydantic import BaseModel, HttpUrl, field_validator
 
 load_dotenv(override=True)
 
@@ -49,9 +50,12 @@ from store import (                     # noqa: E402
     rollback_transcript_edit, search_news_items, set_settings, start_expansion,
     sweep_running_expansions, update_news_item_enrichment, update_news_item_status,
     update_stream_fields, upsert_expansion, upsert_stage_gate,
+    upsert_transcript_draft, get_transcript_draft, delete_transcript_draft,
+    replace_screenshots, list_screenshots, delete_screenshot,
 )
 import local_llm                        # noqa: E402
 import pipeline                         # noqa: E402
+import screenshot as screenshot_mod     # noqa: E402
 
 from prisma import Prisma               # noqa: E402
 
@@ -72,6 +76,22 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="VideoText", version="0.4.0", lifespan=lifespan)
+
+
+# Log 422 request-validation failures with the exact field + bad input, so a
+# rejected /briefs (transcription never starts) is diagnosable from the console.
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+from fastapi.responses import JSONResponse             # noqa: E402
+
+
+@app.exception_handler(RequestValidationError)
+async def _log_validation_error(request, exc: RequestValidationError):
+    for e in exc.errors():
+        loc = ".".join(str(x) for x in e.get("loc", []))
+        print(f"[422] {request.method} {request.url.path} :: {loc}: "
+              f"{e.get('msg')} (input={e.get('input')!r})", flush=True)
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
 
 import threading                        # noqa: E402
 _expansion_jobs: set[tuple[str, str]] = set()
@@ -99,6 +119,57 @@ def _run_expansion_job(*, video_id, mode, system, user, model, num_ctx, temperat
     finally:
         with _expansion_jobs_lock:
             _expansion_jobs.discard((video_id, mode))
+
+
+_screenshot_jobs: set[str] = set()
+_screenshot_jobs_lock = threading.Lock()
+
+
+def _run_screenshot_job(video_id: str, model: str | None):
+    """Daemon thread: detect visual-reference moments in the transcript, grab a
+    frame per moment (one low-res video download + local ffmpeg cuts), and
+    persist. Replaces prior screenshots only when new frames are captured — a
+    run that finds nothing leaves existing references untouched."""
+    try:
+        v = get_video(video_id, with_segments=True)
+        if not v:
+            return
+        segments = v.segments or []
+        moments = screenshot_mod.detect_reference_moments(segments, model=model)
+        by_index = {s.index: s for s in segments}
+        prepared = []
+        for m in moments:
+            seg = by_index.get(m["segment_index"])
+            if not seg:
+                continue
+            prepared.append({
+                # +1.5s so the thing being described is actually on screen
+                "ts": max(0.0, float(seg.start) + 1.5),
+                "segment_index": m["segment_index"],
+                "caption": m["caption"], "reason": m["reason"],
+                "model": m.get("model", ""),
+            })
+        captured = screenshot_mod.capture_frames(v.url, prepared, video_id) if prepared else []
+        rows = [{
+            "timestamp": c["ts"], "segment_index": c.get("segment_index"),
+            "file_path": c["file_path"], "caption": c.get("caption", ""),
+            "reason": c.get("reason", ""), "model": c.get("model", ""),
+        } for c in captured]
+        if rows:
+            for old in (list_screenshots(video_id) or []):
+                try:
+                    Path(old.filePath).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            replace_screenshots(video_id, rows)
+        print(f"[screenshots] {video_id}: {len(moments)} moments → {len(rows)} frames",
+              flush=True)
+    except Exception as e:
+        print(f"[screenshots] job FAILED {video_id}: {type(e).__name__}: {e}", flush=True)
+    finally:
+        with _screenshot_jobs_lock:
+            _screenshot_jobs.discard(video_id)
+
 
 _ROOT = Path(__file__).parent
 _STATIC = _ROOT / "static"
@@ -137,6 +208,21 @@ class BriefRequest(BaseModel):
     backend: Literal["auto", "supadata", "ytdlp"] = "auto"
     no_brief: bool = False
     force_refresh: bool = False
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _normalize_url(cls, v):
+        """Be forgiving about how the URL is pasted — HttpUrl otherwise 422s on
+        anything without a scheme. Accepts a bare 11-char YouTube id and a
+        scheme-less host (`www.youtube.com/...`, `youtu.be/...`)."""
+        if not isinstance(v, str):
+            return v
+        s = v.strip()
+        if re.fullmatch(r"[A-Za-z0-9_-]{11}", s):
+            return f"https://www.youtube.com/watch?v={s}"
+        if s and "://" not in s:
+            return f"https://{s}"
+        return s
 
 
 # ─── Frontend entry ───────────────────────────────────────────────
@@ -769,6 +855,21 @@ def _current_doc_text(video_id: str, kind: str) -> str:
     return _pick_current(original, list_transcript_edits(video_id, kind=kind))
 
 
+def _doc_download_text(video_id: str, kind: str, which: str) -> str:
+    """Text for the download buttons. `which`:
+      - "current" (default) → latest edit if any, else original ("улучшенный" view);
+        for essence this is the generated суть.
+      - "original" → raw source text ("оригинал" view).
+    404 if the requested view is empty (e.g. essence has no original yet)."""
+    if which == "original":
+        text, _has = _original_doc_text(video_id, kind)
+    else:
+        text = _current_doc_text(video_id, kind)
+    if not (text or "").strip():
+        raise HTTPException(status_code=404, detail=f"Нет текста для {kind}/{which}")
+    return text
+
+
 def _essence_section(essence_md: str) -> str:
     """Optional '## Суть' block prepended to the expand user-prompt source."""
     essence_md = (essence_md or "").strip()
@@ -966,6 +1067,33 @@ def export_doc_edit_md(video_id: str, kind: str, version: int):
     )
 
 
+@app.get("/videos/{video_id}/docs/{kind}/download.pdf")
+def export_doc_current_pdf(video_id: str, kind: str, which: str = "current"):
+    """Download the whole doc block (расшифровка / бриф / суть) as one PDF.
+    `which=current` (default) exports the улучшенный / generated text; `which=original`
+    exports the raw source. Per-version PDFs live under /edits/{version}.pdf."""
+    _require_kind(kind)
+    from export import markdown_to_pdf
+    text = _doc_download_text(video_id, kind, which)
+    suffix = " (оригинал)" if which == "original" else ""
+    pdf_bytes = markdown_to_pdf(text, title=f"{_doc_title(kind)}{suffix}")
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{kind}-{which}-{video_id}.pdf"'},
+    )
+
+
+@app.get("/videos/{video_id}/docs/{kind}/download.md")
+def export_doc_current_md(video_id: str, kind: str, which: str = "current"):
+    """Markdown counterpart of the doc-block download (see export_doc_current_pdf)."""
+    _require_kind(kind)
+    text = _doc_download_text(video_id, kind, which)
+    return Response(
+        content=text, media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{kind}-{which}-{video_id}.md"'},
+    )
+
+
 @app.get("/videos/{video_id}/docs/{kind}/edits/{version}")
 def read_doc_edit(video_id: str, kind: str, version: int) -> dict:
     _require_kind(kind)
@@ -1013,6 +1141,7 @@ def doc_edit_preview(video_id: str, kind: str, req: DocEditRequest):
     def event_stream():
         import time
         started = time.monotonic()
+        full = ""
         try:
             yield f"data: {json.dumps({'type': 'meta', 'model': model, 'op': req.op, 'kind': kind, 'current_chars': len(user)}, ensure_ascii=False)}\n\n"
             if transcript_edit._is_claude(model):
@@ -1021,9 +1150,27 @@ def doc_edit_preview(video_id: str, kind: str, req: DocEditRequest):
                 pieces = local_llm.stream_chat(system=system, user=user, model=model,
                                                 num_ctx=num_ctx, temperature=temperature)
             for piece in pieces:
+                full += piece
                 yield f"data: {json.dumps({'type': 'delta', 'text': piece}, ensure_ascii=False)}\n\n"
             elapsed_ms = int((time.monotonic() - started) * 1000)
-            yield f"data: {json.dumps({'type': 'done', 'model': model, 'op': req.op, 'elapsed_ms': elapsed_ms}, ensure_ascii=False)}\n\n"
+            # Tokens are spent by the time we get here — persist the result as a
+            # draft so a browser refresh restores the preview instead of
+            # re-generating. One draft per (video, kind); this UPSERTs it.
+            saved = False
+            if full.strip():
+                try:
+                    upsert_transcript_draft(
+                        video_id=video_id, kind=kind, content_md=full, op=req.op,
+                        instruction=req.instruction, from_version=req.base_version,
+                        model=model, elapsed_ms=elapsed_ms)
+                    saved = True
+                except Exception as e:
+                    print(f"[edit] draft save FAILED {video_id}/{kind}: "
+                          f"{type(e).__name__}: {e}", flush=True)
+            print(f"[edit] {video_id}/{kind} model={model} op={req.op} "
+                  f"chars={len(full)} elapsed={elapsed_ms}ms draft_saved={saved}",
+                  flush=True)
+            yield f"data: {json.dumps({'type': 'done', 'model': model, 'op': req.op, 'elapsed_ms': elapsed_ms, 'draft_saved': saved}, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'msg': f'{type(e).__name__}: {e}'}, ensure_ascii=False)}\n\n"
 
@@ -1050,7 +1197,111 @@ def doc_edit_apply(video_id: str, kind: str, req: DocApplyRequest) -> dict:
         model=req.model or "claude-sonnet-4-6",
         input_chars=len(req.content_md), elapsed_ms=req.elapsed_ms,
     )
+    delete_transcript_draft(video_id, kind)  # applied → the draft is now a version
     return _edit_to_dict(row)
+
+
+def _draft_to_dict(d) -> dict:
+    return {
+        "video_id": d.videoId, "kind": d.kind, "content_md": d.contentMd,
+        "op": d.op, "instruction": d.instruction, "from_version": d.fromVersion,
+        "model": d.model, "elapsed_ms": d.elapsedMs,
+        "updated_at": d.updatedAt.isoformat(),
+    }
+
+
+@app.get("/videos/{video_id}/docs/{kind}/draft")
+def read_doc_draft(video_id: str, kind: str):
+    """The unsaved generation for this doc block, or null. Restores the preview
+    after a browser refresh without re-spending tokens."""
+    _require_kind(kind)
+    d = get_transcript_draft(video_id, kind)
+    return _draft_to_dict(d) if d else None
+
+
+@app.get("/videos/{video_id}/docs/{kind}/draft/download.pdf")
+def export_doc_draft_pdf(video_id: str, kind: str):
+    _require_kind(kind)
+    from export import markdown_to_pdf
+    d = get_transcript_draft(video_id, kind)
+    if not d or not (d.contentMd or "").strip():
+        raise HTTPException(status_code=404, detail=f"Нет черновика для {kind}")
+    pdf_bytes = markdown_to_pdf(d.contentMd, title=f"{_doc_title(kind)} (черновик)")
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{kind}-draft-{video_id}.pdf"'},
+    )
+
+
+@app.get("/videos/{video_id}/docs/{kind}/draft/download.md")
+def export_doc_draft_md(video_id: str, kind: str):
+    _require_kind(kind)
+    d = get_transcript_draft(video_id, kind)
+    if not d or not (d.contentMd or "").strip():
+        raise HTTPException(status_code=404, detail=f"Нет черновика для {kind}")
+    return Response(
+        content=d.contentMd, media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{kind}-draft-{video_id}.md"'},
+    )
+
+
+@app.delete("/videos/{video_id}/docs/{kind}/draft")
+def discard_doc_draft(video_id: str, kind: str) -> dict:
+    """Drop the unsaved generation (user hit «отмена»)."""
+    _require_kind(kind)
+    delete_transcript_draft(video_id, kind)
+    return {"ok": True}
+
+
+# ─── Screenshot-references ─────────────────────────────────────────
+
+def _screenshot_to_dict(r) -> dict:
+    return {
+        "id": r.id, "video_id": r.videoId, "timestamp": r.timestamp,
+        "segment_index": r.segmentIndex,
+        "url": "/" + r.filePath.replace("\\", "/"),
+        "caption": r.caption, "reason": r.reason, "model": r.model,
+    }
+
+
+class ScreenshotExtractRequest(BaseModel):
+    model: str | None = None
+
+
+@app.post("/videos/{video_id}/screenshots/extract")
+def extract_screenshots(video_id: str, req: ScreenshotExtractRequest) -> dict:
+    """Kick off (in the background) detection + frame-grabbing of visual
+    references for this video. Poll GET /screenshots for progress + results."""
+    if not get_video(video_id):
+        raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
+    with _screenshot_jobs_lock:
+        if video_id in _screenshot_jobs:
+            return {"status": "running"}
+        _screenshot_jobs.add(video_id)
+    threading.Thread(target=_run_screenshot_job, args=(video_id, req.model),
+                     daemon=True).start()
+    return {"status": "started"}
+
+
+@app.get("/videos/{video_id}/screenshots")
+def read_screenshots(video_id: str) -> dict:
+    with _screenshot_jobs_lock:
+        running = video_id in _screenshot_jobs
+    rows = list_screenshots(video_id) or []
+    return {"running": running,
+            "screenshots": [_screenshot_to_dict(r) for r in rows]}
+
+
+@app.delete("/videos/{video_id}/screenshots/{screenshot_id}")
+def remove_screenshot(video_id: str, screenshot_id: int) -> dict:
+    for r in (list_screenshots(video_id) or []):
+        if r.id == screenshot_id:
+            try:
+                Path(r.filePath).unlink(missing_ok=True)
+            except Exception:
+                pass
+    delete_screenshot(screenshot_id)
+    return {"ok": True}
 
 
 @app.post("/videos/{video_id}/docs/{kind}/edits/{version}/rollback")

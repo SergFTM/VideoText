@@ -12,10 +12,14 @@ from prisma import Prisma
 
 # Per-1M-token pricing (USD). Keep in sync with CLAUDE.md + pricing pages.
 _PRICING: dict[str, tuple[float, float]] = {
+    "claude-opus-4-8":   (5.0, 25.0),
     "claude-opus-4-7":   (5.0, 25.0),
     "claude-opus-4-6":   (5.0, 25.0),
+    "claude-sonnet-5":   (3.0, 15.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5":  (1.0, 5.0),
+    # claude-opus-5: rate unconfirmed — left unpriced so cost shows blank
+    # rather than a fabricated number. Add (in, out) $/1M once verified.
 }
 
 
@@ -799,6 +803,91 @@ async def _list_stage_gates(video_id: str):
         await db.disconnect()
 
 
+# ─── Doc drafts (unsaved generations, one per video+kind) ──────────
+
+async def _upsert_transcript_draft(*, video_id, kind, content_md, op,
+                                   instruction, from_version, model, elapsed_ms):
+    db = Prisma()
+    await db.connect()
+    try:
+        fields = {
+            "contentMd": content_md, "op": op, "instruction": instruction or "",
+            "fromVersion": from_version, "model": model, "elapsedMs": elapsed_ms,
+        }
+        return await db.transcriptdraft.upsert(
+            where={"videoId_kind": {"videoId": video_id, "kind": kind}},
+            data={"create": {"videoId": video_id, "kind": kind, **fields},
+                  "update": fields},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _get_transcript_draft(video_id: str, kind: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.transcriptdraft.find_unique(
+            where={"videoId_kind": {"videoId": video_id, "kind": kind}})
+    finally:
+        await db.disconnect()
+
+
+async def _delete_transcript_draft(video_id: str, kind: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        # delete_many so a missing draft is a no-op (unique delete would raise).
+        return await db.transcriptdraft.delete_many(
+            where={"videoId": video_id, "kind": kind})
+    finally:
+        await db.disconnect()
+
+
+# ─── Screenshot-references ─────────────────────────────────────────
+
+async def _replace_screenshots(video_id: str, items: list[dict]):
+    """Drop existing screenshot rows for the video, then insert `items`
+    (each: timestamp, segment_index?, file_path, caption, reason?, model?)."""
+    db = Prisma()
+    await db.connect()
+    try:
+        await db.screenshot.delete_many(where={"videoId": video_id})
+        rows = []
+        for it in items:
+            rows.append(await db.screenshot.create(data={
+                "videoId": video_id,
+                "timestamp": float(it["timestamp"]),
+                "segmentIndex": it.get("segment_index"),
+                "filePath": it["file_path"],
+                "caption": it.get("caption", ""),
+                "reason": it.get("reason", ""),
+                "model": it.get("model", ""),
+            }))
+        return rows
+    finally:
+        await db.disconnect()
+
+
+async def _list_screenshots(video_id: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.screenshot.find_many(
+            where={"videoId": video_id}, order={"timestamp": "asc"})
+    finally:
+        await db.disconnect()
+
+
+async def _delete_screenshot(screenshot_id: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.screenshot.delete_many(where={"id": screenshot_id})
+    finally:
+        await db.disconnect()
+
+
 def create_transcript_edit(**kwargs):
     return asyncio.run(_create_transcript_edit(**kwargs))
 
@@ -813,6 +902,30 @@ def get_stage_gate(video_id: str, stage: str):
 
 def list_stage_gates(video_id: str):
     return asyncio.run(_list_stage_gates(video_id))
+
+
+def upsert_transcript_draft(**kwargs):
+    return asyncio.run(_upsert_transcript_draft(**kwargs))
+
+
+def get_transcript_draft(video_id: str, kind: str):
+    return asyncio.run(_get_transcript_draft(video_id, kind))
+
+
+def delete_transcript_draft(video_id: str, kind: str):
+    return asyncio.run(_delete_transcript_draft(video_id, kind))
+
+
+def replace_screenshots(video_id: str, items: list[dict]):
+    return asyncio.run(_replace_screenshots(video_id, items))
+
+
+def list_screenshots(video_id: str):
+    return asyncio.run(_list_screenshots(video_id))
+
+
+def delete_screenshot(screenshot_id: int):
+    return asyncio.run(_delete_screenshot(screenshot_id))
 
 
 def list_transcript_edits(video_id: str, kind: str = "transcript"):
