@@ -143,13 +143,16 @@ def _run_screenshot_job(video_id: str, model: str | None):
             if not seg:
                 continue
             prepared.append({
-                # +1.5s so the thing being described is actually on screen
-                "ts": max(0.0, float(seg.start) + 1.5),
+                # base timestamp; the vision window searches around it for the
+                # frame that actually shows the described screen
+                "ts": max(0.0, float(seg.start)),
                 "segment_index": m["segment_index"],
                 "caption": m["caption"], "reason": m["reason"],
                 "model": m.get("model", ""),
             })
-        captured = screenshot_mod.capture_frames(v.url, prepared, video_id) if prepared else []
+        captured = (screenshot_mod.capture_frames_vision(
+            v.url, prepared, video_id, vision_model="claude-opus-4-8")
+            if prepared else [])
         rows = [{
             "timestamp": c["ts"], "segment_index": c.get("segment_index"),
             "file_path": c["file_path"], "caption": c.get("caption", ""),

@@ -164,6 +164,90 @@ def grab_frame(video_file: Path, ts: float, out_path: Path, timeout: int = 30) -
     return True
 
 
+# Candidate offsets (seconds) around a moment's base timestamp. The screen-share
+# in an edited video appears with a variable delay after the speaker mentions it,
+# so a vision model picks which of these frames actually shows the described UI.
+_WINDOW_OFFSETS = [-1.0, 1.0, 3.0, 5.0, 8.0, 11.0]
+
+
+def _pick_frame_vision(paths: list[Path], caption: str, model: str | None) -> int | None:
+    """Show candidate frames to a vision model; return the index of the frame
+    that actually shows the described screen/UI, or None if none do."""
+    import base64
+    import json as _json
+    import anthropic
+    import brief
+
+    if not paths:
+        return None
+    content: list = []
+    for i, p in enumerate(paths):
+        data = base64.standard_b64encode(Path(p).read_bytes()).decode()
+        content.append({"type": "text", "text": f"Кадр {i}:"})
+        content.append({"type": "image", "source": {
+            "type": "base64", "media_type": "image/jpeg", "data": data}})
+    content.append({"type": "text", "text": (
+        f"Говорящий описывал: «{caption}». Среди кадров выше выбери индекс кадра,"
+        f" который ДЕЙСТВИТЕЛЬНО показывает этот экран/интерфейс (терминал, диалог"
+        f" настроек, окно приложения, график, код), а НЕ говорящего человека, пустой"
+        f" фон или посторонний план. Верни index выбранного кадра (0..{len(paths) - 1}),"
+        f" или -1, если ни один кадр не показывает нужный экран.")})
+
+    resolved = brief.resolve_model(model)
+    client = anthropic.Anthropic()
+    try:
+        msg = client.messages.create(
+            model=resolved, max_tokens=200,
+            messages=[{"role": "user", "content": content}],
+            output_config={"format": {"type": "json_schema", "schema": {
+                "type": "object",
+                "properties": {"index": {"type": "integer"}},
+                "required": ["index"], "additionalProperties": False}}},
+        )
+    except Exception as e:
+        print(f"[screenshot] vision pick failed: {type(e).__name__}: {e}", file=sys.stderr)
+        return None
+    text = next((b.text for b in msg.content if b.type == "text"), "")
+    try:
+        idx = int(_json.loads(text)["index"])
+    except Exception:
+        return None
+    return idx if 0 <= idx < len(paths) else None
+
+
+def capture_frames_vision(youtube_url: str, moments: list[dict], video_id: str,
+                          vision_model: str | None = None) -> list[dict]:
+    """Download the video once; for each moment grab a window of candidate frames
+    and let a vision model pick the one that shows the described screen. Moments
+    where no candidate shows the screen are dropped (no talking-head shots).
+
+    `moments`: {"ts": base_seconds, "caption", ...}. Returns kept moments with
+    "ts" set to the chosen frame's timestamp and "file_path" added."""
+    import shutil
+    with tempfile.TemporaryDirectory() as tmp:
+        src = download_video(youtube_url, Path(tmp))
+        out = []
+        for m in moments:
+            base = float(m["ts"])
+            cands: list[tuple[float, Path]] = []
+            for off in _WINDOW_OFFSETS:
+                ts = max(0.0, base + off)
+                cpath = Path(tmp) / f"cand-{int(round(base))}-{off}.jpg"
+                if grab_frame(src, ts, cpath):
+                    cands.append((ts, cpath))
+            if not cands:
+                continue
+            idx = _pick_frame_vision([c[1] for c in cands], m.get("caption", ""), vision_model)
+            if idx is None:
+                continue  # no candidate shows the screen → drop the moment
+            chosen_ts, chosen_path = cands[idx]
+            rel = f"images/shot-{video_id}-{int(round(chosen_ts))}.jpg"
+            Path(rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(chosen_path, rel)
+            out.append({**m, "ts": chosen_ts, "file_path": rel})
+        return out
+
+
 def capture_frames(youtube_url: str, moments: list[dict], video_id: str) -> list[dict]:
     """Download the video once, then extract one frame per moment.
 
