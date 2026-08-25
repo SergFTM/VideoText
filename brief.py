@@ -14,11 +14,17 @@ import anthropic
 
 # ─── Model shortcuts ──────────────────────────────────────────────
 _MODEL_ALIASES = {
-    "opus": "claude-opus-4-7",
+    # Strong tier — engineering-grade briefs / ТЗ. "opus" = chosen strong default.
+    "opus": "claude-opus-4-8",
+    "opus5": "claude-opus-5",
+    "opus48": "claude-opus-4-8",
     "opus47": "claude-opus-4-7",
     "opus46": "claude-opus-4-6",
+    # Balanced tier.
     "sonnet": "claude-sonnet-4-6",
+    "sonnet5": "claude-sonnet-5",
     "sonnet46": "claude-sonnet-4-6",
+    # Cheap/fast tier — simple briefs.
     "haiku": "claude-haiku-4-5",
     "haiku45": "claude-haiku-4-5",
 }

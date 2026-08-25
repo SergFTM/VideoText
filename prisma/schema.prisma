@@ -4,7 +4,7 @@
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./videotext.db"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -25,9 +25,37 @@ model Video {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  segments Segment[]
-  briefs   Brief[]
-  runs     Run[]
+  segments         Segment[]
+  briefs           Brief[]
+  runs             Run[]
+  expansions       Expansion[]
+  transcriptEdits  TranscriptEdit[]
+  transcriptDrafts TranscriptDraft[]
+  screenshots      Screenshot[]
+  stageGates       StageGate[]
+}
+
+// Local-LLM-generated expansions of brief sections: ТЗ, ресерч, репорт.
+// Unique on (videoId, mode) — re-running the same mode UPSERTs the row.
+model Expansion {
+  id            Int      @id @default(autoincrement())
+  videoId       String
+  video         Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  mode          String   // "spec" | "research" | "report"
+  sourceTitle   String   // heading the user clicked ("Черновик ТЗ", "Суть", ...)
+  sourceMd      String   // body of the source section at the time of expansion
+  contextMode   String   // "brief" | "transcript" | "both"
+  model         String   // ollama model tag, e.g. "qwen2.5:7b"
+  numCtx        Int      @default(8192)
+  contentMd     String   // the expanded text returned by the model
+  inputChars    Int      @default(0) // size of the user message sent to ollama
+  elapsedMs     Int      @default(0) // wall-clock generation time
+  status        String   @default("done") // "running" | "done" | "error"
+  error         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([videoId, mode])
 }
 
 model Segment {
@@ -58,6 +86,79 @@ model Brief {
   cacheWriteTokens Int      @default(0)
   costUsd          Float? // computed at save time
   createdAt        DateTime @default(now())
+}
+
+// AI-edited versions of a video's transcript. The original Segment[] is the
+// immutable source of truth; each edit is a new append-only version. Rollback
+// to vK creates a new version cloned from vK (history stays linear).
+model TranscriptEdit {
+  id          Int      @id @default(autoincrement())
+  videoId     String
+  video       Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  kind        String   @default("transcript") // "transcript" | "brief" | "essence"
+  version     Int // 1..N within (video, kind)
+  contentMd   String // full edited document text
+  op          String // "clean"|"structure"|"improve"|"expand_idea"|"chat"|"seed"|"rollback"
+  instruction String   @default("") // user's ТЗ / chat message
+  fromVersion Int? // lineage: which version this grew from (null = from original)
+  model       String
+  inputChars  Int      @default(0)
+  elapsedMs   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@unique([videoId, kind, version])
+}
+
+// Unsaved AI generation for a doc block, persisted the moment tokens are spent
+// so a browser refresh restores the pending preview instead of re-generating
+// (and re-spending tokens). One draft per (video, kind) — a new generation
+// UPSERTs it. Cleared when the user applies it (→ TranscriptEdit) or cancels.
+model TranscriptDraft {
+  id          Int      @id @default(autoincrement())
+  videoId     String
+  video       Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  kind        String // "transcript" | "brief" | "essence"
+  contentMd   String // the generated full document text
+  op          String // which op produced it (e.g. "expand_idea", "seed")
+  instruction String   @default("")
+  fromVersion Int? // base version the generation grew from (null = original)
+  model       String
+  elapsedMs   Int      @default(0)
+  updatedAt   DateTime @updatedAt
+
+  @@unique([videoId, kind])
+}
+
+// Screenshot-references: video frames grabbed at moments where the transcript
+// describes something shown on screen (a terminal, a service's UI/config), so a
+// ТЗ can carry visual proof. Detected by an LLM pass over the segments; the
+// frame is pulled from a low-res video-only download via ffmpeg.
+model Screenshot {
+  id           Int      @id @default(autoincrement())
+  videoId      String
+  video        Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  timestamp    Float // seconds into the video
+  segmentIndex Int? // transcript segment that triggered it (null = unmapped)
+  filePath     String // ./images/shot-<videoId>-<ts>.jpg
+  caption      String // what is shown at this moment
+  reason       String   @default("") // why it's a useful reference for a ТЗ
+  model        String   @default("") // detector model id
+  createdAt    DateTime @default(now())
+
+  @@index([videoId])
+}
+
+// Layer 3 — readiness-checklist state per (video, stage). AI-assessed + user overrides.
+model StageGate {
+  id         Int       @id @default(autoincrement())
+  videoId    String
+  video      Video     @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  stage      String // "research" | "report" | "spec" | "ai_algorithms"
+  items      String // JSON: [{key,label,checked,ai_note}]
+  assessedAt DateTime?
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([videoId, stage])
 }
 
 model Run {
@@ -192,7 +293,8 @@ model AppSetting {
 
 model AssistantSession {
   id        String   @id @default(cuid())
-  title     String?  // auto-generated from first question
+  title     String?
+  persona   String   @default("platform")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -203,9 +305,10 @@ model AssistantMessage {
   id              Int      @id @default(autoincrement())
   sessionId       String
   session         AssistantSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  role            String   // "user" | "assistant" | "tool"
-  content         String   // plain text; for tool calls this is JSON {name, args, result}
-  model           String?  // provider/model that produced this (null for user msgs)
+  role            String
+  content         String
+  persona         String   @default("platform")
+  model           String?
   inputTokens     Int      @default(0)
   outputTokens    Int      @default(0)
   cacheReadTokens Int      @default(0)
@@ -221,7 +324,8 @@ model AssistantCache {
   id          Int      @id @default(autoincrement())
   question    String
   answer      String
-  embedding   String?  // JSON float[] — fastembed vector (null if dedup disabled)
+  persona     String   @default("platform")
+  embedding   String?
   usedCount   Int      @default(1)
   lastUsedAt  DateTime @default(now())
   createdAt   DateTime @default(now())

@@ -19,11 +19,9 @@ from typing import Any, AsyncIterator, Callable
 
 from prisma import Prisma
 
-from assistant.cache import find_cached_answer, save_qa
-from assistant.context_builder import build_context
-from assistant.tools import (
-    TOOLS, anthropic_schema, execute_tool, openai_schema,
-)
+from assistant.core.cache import find_cached_answer, save_qa
+from assistant.core.context_builder import build_context
+from assistant.core.tools_runtime import execute, openai_schema, anthropic_schema, registry
 
 
 SYSTEM_PROMPT_BASE = """Ты — встроенный AI-ассистент приложения VideoText.
@@ -141,12 +139,14 @@ class Assistant:
 
     def __init__(
         self,
+        persona=None,
         *,
         provider: str = "openai",
         model: str = "gpt-4o",
         use_cache: bool = True,
         cache_threshold: float = 0.85,
     ):
+        self.persona = persona
         self.provider = provider
         self.model = model
         self.use_cache = use_cache
@@ -174,7 +174,8 @@ class Assistant:
         """
         # 1. Cache lookup
         if self.use_cache:
-            cached = await find_cached_answer(db, question, threshold=self.cache_threshold)
+            persona_name = self.persona.name if self.persona else "platform"
+            cached = await find_cached_answer(db, question, persona=persona_name, threshold=self.cache_threshold)
             if cached:
                 yield {
                     "type": "cache_hit",
@@ -186,10 +187,11 @@ class Assistant:
                 return
 
         # 2. Build cherry-picked context
-        ctx_text = await build_context(db, question, ui_context=ui_context)
+        ctx_text = await build_context(db, question, persona=self.persona, ui_context=ui_context)
         yield {"type": "context", "chars": len(ctx_text)}
 
-        system_msg = SYSTEM_PROMPT_BASE + "\n\n# Текущий контекст системы\n\n" + ctx_text
+        base_prompt = (self.persona.system_prompt if self.persona else SYSTEM_PROMPT_BASE)
+        system_msg = base_prompt + "\n\n# Текущий контекст системы\n\n" + ctx_text
         messages = [
             {"role": "system", "content": system_msg},
             {"role": "user", "content": question},
@@ -223,7 +225,7 @@ class Assistant:
             return
 
         client = AsyncOpenAI(api_key=key)
-        tools = openai_schema()
+        tools = openai_schema(self.persona) if self.persona else []
         total_in, total_out = 0, 0
         final_text_parts: list[str] = []
 
@@ -268,11 +270,13 @@ class Assistant:
             for tc in turn.tool_calls:
                 name, args = tc["name"], tc["args"]
                 # Inject auto_confirm if the user already approved actions
-                if auto_confirm and TOOLS.get(name, {}).get("is_write"):
-                    args = {**args, "confirm": True}
+                if auto_confirm and self.persona:
+                    td = registry(self.persona).get(name)
+                    if td and td.is_write:
+                        args = {**args, "confirm": True}
 
                 yield {"type": "tool_call", "name": name, "args": args}
-                result = execute_tool(name, args)
+                result = execute(name, args, self.persona) if self.persona else {"ok": False, "error": "no persona"}
                 yield {"type": "tool_result", "name": name, "result": result}
 
                 messages.append({
@@ -301,7 +305,7 @@ class Assistant:
         user_msgs = [m for m in messages if m["role"] != "system"]
 
         client = anthropic.AsyncAnthropic(api_key=key)
-        tools = anthropic_schema()
+        tools = anthropic_schema(self.persona) if self.persona else []
         total_in, total_out = 0, 0
         final_text_parts: list[str] = []
 
@@ -334,10 +338,12 @@ class Assistant:
             tool_results = []
             for tu in tool_uses:
                 name, args = tu.name, tu.input
-                if auto_confirm and TOOLS.get(name, {}).get("is_write"):
-                    args = {**args, "confirm": True}
+                if auto_confirm and self.persona:
+                    td = registry(self.persona).get(name)
+                    if td and td.is_write:
+                        args = {**args, "confirm": True}
                 yield {"type": "tool_call", "name": name, "args": args}
-                result = execute_tool(name, args)
+                result = execute(name, args, self.persona) if self.persona else {"ok": False, "error": "no persona"}
                 yield {"type": "tool_result", "name": name, "result": result}
                 tool_results.append({
                     "type": "tool_result",

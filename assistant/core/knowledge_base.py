@@ -20,10 +20,10 @@ from pathlib import Path
 import yaml
 from prisma import Prisma
 
-from assistant.analyzer import tokenize
+from assistant.core.analyzer import tokenize
 
-ROOT = Path(__file__).resolve().parent.parent
-ASSISTANT_DIR = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent.parent
+ASSISTANT_DIR = Path(__file__).resolve().parent.parent
 
 
 # ─── Parsers ──────────────────────────────────────────────────────────

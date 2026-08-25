@@ -233,7 +233,7 @@ def save_api_key(provider: str, key: str, confirm: bool = False) -> dict:
     if not env_var:
         return _err(f"no env var mapped for provider: {provider}")
 
-    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
     env_path = os.path.abspath(env_path)
 
     lines: list[str] = []
@@ -274,162 +274,79 @@ def reject_news_item(item_id: int, confirm: bool = False) -> dict:
     return _ok({"id": item_id}, f"item {item_id} rejected")
 
 
-# ─── Registry ─────────────────────────────────────────────────────────
+# ─── Registry (ToolDef-based) ──────────────────────────────────────────
 
+from .base import ToolDef
 
-TOOLS: dict[str, dict] = {
-    "get_settings_snapshot": {
-        "description": "Текущие настройки + какие API-ключи настроены (без раскрытия значений).",
-        "parameters": {"type": "object", "properties": {}, "required": []},
-        "execute": lambda: get_settings_snapshot(),
-        "is_write": False,
-    },
-    "test_integration": {
-        "description": "Проверить коннектор (supadata/anthropic/openai/pexels/fastembed/ollama). Делает реальный тестовый запрос.",
-        "parameters": {
+TOOLS: dict[str, ToolDef] = {
+    "get_settings_snapshot": ToolDef(
+        name="get_settings_snapshot",
+        description="Get current settings and integration key presence.",
+        parameters={"type": "object", "properties": {}},
+        execute=get_settings_snapshot,
+    ),
+    "test_integration": ToolDef(
+        name="test_integration",
+        description="Ping a connector (supadata|anthropic|openai|fastembed|ollama|pexels).",
+        parameters={
             "type": "object",
-            "properties": {
-                "provider": {"type": "string", "enum": ["supadata", "anthropic", "openai", "fastembed", "ollama", "pexels"]},
-            },
+            "properties": {"provider": {"type": "string"}},
             "required": ["provider"],
         },
-        "execute": lambda provider: test_integration(provider),
-        "is_write": False,
-    },
-    "get_recent_errors": {
-        "description": "Последние ошибки из Run и Chunk таблиц за последние N минут.",
-        "parameters": {
+        execute=test_integration,
+    ),
+    "get_recent_errors": ToolDef(
+        name="get_recent_errors",
+        description="Recent Run+Chunk failures (default last 60 min, top 20).",
+        parameters={
             "type": "object",
             "properties": {
-                "minutes": {"type": "integer", "default": 60, "minimum": 1, "maximum": 1440},
-                "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100},
+                "minutes": {"type": "integer", "default": 60},
+                "limit": {"type": "integer", "default": 20},
             },
-            "required": [],
         },
-        "execute": lambda minutes=60, limit=20: get_recent_errors(minutes, limit),
-        "is_write": False,
-    },
-    "list_active_streams": {
-        "description": "Активные и приостановленные live-стримы.",
-        "parameters": {"type": "object", "properties": {}, "required": []},
-        "execute": lambda: list_active_streams(),
-        "is_write": False,
-    },
-    "list_news_items": {
-        "description": "Список новостей. По умолчанию — draft (ожидают модерации).",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "status": {"type": "string", "enum": ["draft", "approved", "rejected", "exported"], "default": "draft"},
-                "limit": {"type": "integer", "default": 30, "minimum": 1, "maximum": 200},
-            },
-            "required": [],
-        },
-        "execute": lambda status="draft", limit=30: list_news_items(status, limit),
-        "is_write": False,
-    },
-    "get_news_item": {
-        "description": "Полная информация по одной новости по ID.",
-        "parameters": {
-            "type": "object",
-            "properties": {"item_id": {"type": "integer"}},
-            "required": ["item_id"],
-        },
-        "execute": lambda item_id: get_news_item(item_id),
-        "is_write": False,
-    },
-    "save_setting": {
-        "description": "Сохранить значение настройки (AppSetting). Требует confirm=True.",
-        "parameters": {
+        execute=get_recent_errors,
+    ),
+    "list_active_streams": ToolDef(
+        name="list_active_streams",
+        description="Active live streams with chunk counts.",
+        parameters={"type": "object", "properties": {}},
+        execute=list_active_streams,
+    ),
+    "save_setting": ToolDef(
+        name="save_setting",
+        description="Change an AppSetting. Returns preview; apply via /chat/platform/apply.",
+        parameters={
             "type": "object",
             "properties": {
                 "key": {"type": "string"},
-                "value": {"description": "любой JSON-сериализуемый тип"},
+                "value": {},
                 "confirm": {"type": "boolean", "default": False},
             },
             "required": ["key", "value"],
         },
-        "execute": lambda key, value, confirm=False: save_setting(key, value, confirm),
-        "is_write": True,
-    },
-    "save_api_key": {
-        "description": "Сохранить API ключ в .env. Требует confirm=True. Поддерживает: supadata/anthropic/openai/pexels.",
-        "parameters": {
+        execute=save_setting,
+        is_write=True,
+    ),
+    "save_api_key": ToolDef(
+        name="save_api_key",
+        description="Persist API key to .env. Returns preview; apply via /chat/platform/apply.",
+        parameters={
             "type": "object",
             "properties": {
-                "provider": {"type": "string", "enum": ["supadata", "anthropic", "openai", "pexels"]},
+                "provider": {"type": "string"},
                 "key": {"type": "string"},
                 "confirm": {"type": "boolean", "default": False},
             },
             "required": ["provider", "key"],
         },
-        "execute": lambda provider, key, confirm=False: save_api_key(provider, key, confirm),
-        "is_write": True,
-    },
-    "approve_news_item": {
-        "description": "Одобрить черновую новость. Требует confirm=True.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "item_id": {"type": "integer"},
-                "confirm": {"type": "boolean", "default": False},
-            },
-            "required": ["item_id"],
-        },
-        "execute": lambda item_id, confirm=False: approve_news_item(item_id, confirm),
-        "is_write": True,
-    },
-    "reject_news_item": {
-        "description": "Отклонить черновую новость. Требует confirm=True.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "item_id": {"type": "integer"},
-                "confirm": {"type": "boolean", "default": False},
-            },
-            "required": ["item_id"],
-        },
-        "execute": lambda item_id, confirm=False: reject_news_item(item_id, confirm),
-        "is_write": True,
-    },
+        execute=save_api_key,
+        is_write=True,
+    ),
+    "storage_stats": ToolDef(
+        name="storage_stats",
+        description="Disk usage, row counts, retention policy snapshot.",
+        parameters={"type": "object", "properties": {}},
+        execute=lambda: {"ok": True, "data": __import__("cleanup").get_storage_stats(__import__("store").get_all_settings())},
+    ),
 }
-
-
-def openai_schema() -> list[dict]:
-    """OpenAI function-calling format."""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": spec["description"],
-                "parameters": spec["parameters"],
-            },
-        }
-        for name, spec in TOOLS.items()
-    ]
-
-
-def anthropic_schema() -> list[dict]:
-    """Anthropic tool-use format."""
-    return [
-        {
-            "name": name,
-            "description": spec["description"],
-            "input_schema": spec["parameters"],
-        }
-        for name, spec in TOOLS.items()
-    ]
-
-
-def execute_tool(name: str, args: dict) -> dict:
-    """Run a tool by name with its arguments. Always returns {ok, ...}."""
-    spec = TOOLS.get(name)
-    if not spec:
-        return _err(f"unknown tool: {name}")
-    try:
-        return spec["execute"](**args)
-    except TypeError as e:
-        return _err(f"bad arguments for {name}: {e}")
-    except Exception as e:
-        return _err(f"{type(e).__name__}: {e}")

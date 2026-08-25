@@ -12,10 +12,14 @@ from prisma import Prisma
 
 # Per-1M-token pricing (USD). Keep in sync with CLAUDE.md + pricing pages.
 _PRICING: dict[str, tuple[float, float]] = {
+    "claude-opus-4-8":   (5.0, 25.0),
     "claude-opus-4-7":   (5.0, 25.0),
     "claude-opus-4-6":   (5.0, 25.0),
+    "claude-sonnet-5":   (3.0, 15.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5":  (1.0, 5.0),
+    # claude-opus-5: rate unconfirmed — left unpriced so cost shows blank
+    # rather than a fabricated number. Add (in, out) $/1M once verified.
 }
 
 
@@ -352,6 +356,39 @@ async def _update_news_item_status(item_id: int, status: str):
         await db.disconnect()
 
 
+# Note: SQLite LIKE is case-insensitive only for ASCII. Cyrillic search is
+# case-sensitive. For the Editor workspace that's acceptable (users can search
+# by keyword in either case) — full unicode-insensitive search needs raw SQL
+# with LOWER() or switching to Postgres with mode="insensitive".
+async def _search_news_items(stream_id: str | None, status: str | None, q: str | None, limit: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        where: dict = {}
+        if stream_id:
+            where["streamId"] = stream_id
+        if status:
+            where["status"] = status
+        if q:
+            # Prisma supports OR with contains (case-insensitive). SQLite LIKE is
+            # case-insensitive for ASCII by default; mode="insensitive" is Postgres-only.
+            # Use startswith/contains on lowercase for simplicity — good enough for UI search.
+            # NB: Prisma Python doesn't support mode= for sqlite; use basic `contains`.
+            where["OR"] = [
+                {"headline": {"contains": q}},
+                {"quote":    {"contains": q}},
+            ]
+        items = await db.newsitem.find_many(
+            where=where,
+            include={"stream": True},
+            order={"createdAt": "desc"},
+            take=limit,
+        )
+        return items
+    finally:
+        await db.disconnect()
+
+
 # ─── Sync wrappers for Phase 1 ─────────────────────────────────────
 
 def create_stream(**kwargs):
@@ -396,6 +433,10 @@ def insert_news_items(stream_id: str, chunk_id: str, items: list[dict], attribut
 
 def list_news_items(stream_id: str | None = None, status: str | None = None, limit: int = 200):
     return asyncio.run(_list_news_items(stream_id, status, limit))
+
+
+def search_news_items(stream_id: str | None, status: str | None, q: str | None, limit: int = 200):
+    return asyncio.run(_search_news_items(stream_id, status, q, limit))
 
 
 def update_news_item_status(item_id: int, status: str):
@@ -443,6 +484,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "assistant_cache_enabled":      True,              # reuse prior answers via fastembed similarity
     "assistant_cache_similarity":   0.85,              # threshold 0.0-1.0
     "assistant_auto_confirm_writes": False,            # if True, writes don't require explicit user OK (risky)
+    # Local LLM (Ollama) — used by spec-expansion in the brief view
+    "local_llm_model":              "qwen2.5:7b",      # any installed Ollama tag; pick from /local-llm/models
+    "local_llm_num_ctx":            32768,             # qwen2.5 native cap; default 2048 truncates brief+transcript
+    "local_llm_temperature":        0.3,               # lower = more focused/deterministic specs
+    "local_llm_max_transcript_chars": 60000,           # raw transcript clip before stuffing into prompt
 }
 
 
@@ -496,6 +542,402 @@ def get_all_settings() -> dict:
 
 def set_settings(updates: dict) -> dict:
     return asyncio.run(_set_settings(updates))
+
+
+# ─── Expansions (local-LLM extended sections) ──────────────────────
+
+async def _upsert_expansion(
+    *, video_id: str, mode: str, source_title: str, source_md: str,
+    context_mode: str, model: str, num_ctx: int,
+    content_md: str, input_chars: int, elapsed_ms: int,
+):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.upsert(
+            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+            data={
+                "create": {
+                    "videoId": video_id, "mode": mode,
+                    "sourceTitle": source_title, "sourceMd": source_md,
+                    "contextMode": context_mode, "model": model, "numCtx": num_ctx,
+                    "contentMd": content_md, "inputChars": input_chars,
+                    "elapsedMs": elapsed_ms,
+                },
+                "update": {
+                    "sourceTitle": source_title, "sourceMd": source_md,
+                    "contextMode": context_mode, "model": model, "numCtx": num_ctx,
+                    "contentMd": content_md, "inputChars": input_chars,
+                    "elapsedMs": elapsed_ms,
+                },
+            },
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _get_expansion(video_id: str, mode: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.find_unique(
+            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _list_expansions(video_id: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.find_many(
+            where={"videoId": video_id},
+            order={"updatedAt": "desc"},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _start_expansion(
+    *, video_id: str, mode: str, source_title: str, source_md: str,
+    context_mode: str, model: str, num_ctx: int, input_chars: int,
+):
+    """UPSERT status=running. On update, preserve the previous contentMd so the
+    UI keeps showing the old artifact while the new one regenerates."""
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.upsert(
+            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+            data={
+                "create": {
+                    "videoId": video_id, "mode": mode, "sourceTitle": source_title,
+                    "sourceMd": source_md, "contextMode": context_mode, "model": model,
+                    "numCtx": num_ctx, "contentMd": "", "inputChars": input_chars,
+                    "elapsedMs": 0, "status": "running", "error": None,
+                },
+                "update": {
+                    "sourceTitle": source_title, "sourceMd": source_md,
+                    "contextMode": context_mode, "model": model, "numCtx": num_ctx,
+                    "inputChars": input_chars, "status": "running", "error": None,
+                },
+            },
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _finish_expansion(*, video_id: str, mode: str, content_md: str, elapsed_ms: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.update(
+            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+            data={"contentMd": content_md, "elapsedMs": elapsed_ms,
+                  "status": "done", "error": None},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _fail_expansion(*, video_id: str, mode: str, error: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.update(
+            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+            data={"status": "error", "error": error[:2000]},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _sweep_running_expansions() -> int:
+    """Mark orphaned running rows (from a crash/restart) as error. Returns count."""
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.update_many(
+            where={"status": "running"},
+            data={"status": "error", "error": "прервано рестартом"},
+        )
+    finally:
+        await db.disconnect()
+
+
+def upsert_expansion(**kwargs):
+    return asyncio.run(_upsert_expansion(**kwargs))
+
+
+def start_expansion(**kwargs):
+    return asyncio.run(_start_expansion(**kwargs))
+
+
+def finish_expansion(**kwargs):
+    return asyncio.run(_finish_expansion(**kwargs))
+
+
+def fail_expansion(**kwargs):
+    return asyncio.run(_fail_expansion(**kwargs))
+
+
+def sweep_running_expansions() -> int:
+    return asyncio.run(_sweep_running_expansions())
+
+
+def get_expansion(video_id: str, mode: str):
+    return asyncio.run(_get_expansion(video_id, mode))
+
+
+def list_expansions(video_id: str):
+    return asyncio.run(_list_expansions(video_id))
+
+
+# ─── Transcript edits (version history) ────────────────────────────
+
+async def _create_transcript_edit(
+    *, video_id: str, content_md: str, op: str, instruction: str,
+    from_version: int | None, model: str, input_chars: int, elapsed_ms: int,
+    kind: str = "transcript",
+):
+    db = Prisma()
+    await db.connect()
+    try:
+        last = await db.transcriptedit.find_first(
+            where={"videoId": video_id, "kind": kind}, order={"version": "desc"},
+        )
+        version = (last.version + 1) if last else 1
+        return await db.transcriptedit.create(data={
+            "videoId": video_id, "kind": kind, "version": version, "contentMd": content_md,
+            "op": op, "instruction": instruction, "fromVersion": from_version,
+            "model": model, "inputChars": input_chars, "elapsedMs": elapsed_ms,
+        })
+    finally:
+        await db.disconnect()
+
+
+async def _list_transcript_edits(video_id: str, kind: str = "transcript"):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.transcriptedit.find_many(
+            where={"videoId": video_id, "kind": kind}, order={"version": "desc"},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _get_transcript_edit(video_id: str, version: int, kind: str = "transcript"):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.transcriptedit.find_unique(
+            where={"videoId_kind_version": {
+                "videoId": video_id, "kind": kind, "version": version}},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _rollback_transcript_edit(video_id: str, version: int, kind: str = "transcript"):
+    db = Prisma()
+    await db.connect()
+    try:
+        src = await db.transcriptedit.find_unique(
+            where={"videoId_kind_version": {
+                "videoId": video_id, "kind": kind, "version": version}},
+        )
+        if not src:
+            return None
+        last = await db.transcriptedit.find_first(
+            where={"videoId": video_id, "kind": kind}, order={"version": "desc"},
+        )
+        new_version = (last.version + 1) if last else 1
+        return await db.transcriptedit.create(data={
+            "videoId": video_id, "kind": kind, "version": new_version,
+            "contentMd": src.contentMd, "op": "rollback", "instruction": "",
+            "fromVersion": version, "model": src.model,
+            "inputChars": src.inputChars, "elapsedMs": 0,
+        })
+    finally:
+        await db.disconnect()
+
+
+async def _upsert_stage_gate(*, video_id: str, stage: str, items: list, assessed: bool):
+    import json as _json
+    from datetime import datetime, timezone
+    db = Prisma()
+    await db.connect()
+    try:
+        payload = _json.dumps(items, ensure_ascii=False)
+        assessed_at = datetime.now(timezone.utc) if assessed else None
+        return await db.stagegate.upsert(
+            where={"videoId_stage": {"videoId": video_id, "stage": stage}},
+            data={
+                "create": {"videoId": video_id, "stage": stage, "items": payload,
+                           "assessedAt": assessed_at},
+                "update": {"items": payload, **({"assessedAt": assessed_at} if assessed else {})},
+            },
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _get_stage_gate(video_id: str, stage: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.stagegate.find_unique(
+            where={"videoId_stage": {"videoId": video_id, "stage": stage}})
+    finally:
+        await db.disconnect()
+
+
+async def _list_stage_gates(video_id: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.stagegate.find_many(where={"videoId": video_id})
+    finally:
+        await db.disconnect()
+
+
+# ─── Doc drafts (unsaved generations, one per video+kind) ──────────
+
+async def _upsert_transcript_draft(*, video_id, kind, content_md, op,
+                                   instruction, from_version, model, elapsed_ms):
+    db = Prisma()
+    await db.connect()
+    try:
+        fields = {
+            "contentMd": content_md, "op": op, "instruction": instruction or "",
+            "fromVersion": from_version, "model": model, "elapsedMs": elapsed_ms,
+        }
+        return await db.transcriptdraft.upsert(
+            where={"videoId_kind": {"videoId": video_id, "kind": kind}},
+            data={"create": {"videoId": video_id, "kind": kind, **fields},
+                  "update": fields},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _get_transcript_draft(video_id: str, kind: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.transcriptdraft.find_unique(
+            where={"videoId_kind": {"videoId": video_id, "kind": kind}})
+    finally:
+        await db.disconnect()
+
+
+async def _delete_transcript_draft(video_id: str, kind: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        # delete_many so a missing draft is a no-op (unique delete would raise).
+        return await db.transcriptdraft.delete_many(
+            where={"videoId": video_id, "kind": kind})
+    finally:
+        await db.disconnect()
+
+
+# ─── Screenshot-references ─────────────────────────────────────────
+
+async def _replace_screenshots(video_id: str, items: list[dict]):
+    """Drop existing screenshot rows for the video, then insert `items`
+    (each: timestamp, segment_index?, file_path, caption, reason?, model?)."""
+    db = Prisma()
+    await db.connect()
+    try:
+        await db.screenshot.delete_many(where={"videoId": video_id})
+        rows = []
+        for it in items:
+            rows.append(await db.screenshot.create(data={
+                "videoId": video_id,
+                "timestamp": float(it["timestamp"]),
+                "segmentIndex": it.get("segment_index"),
+                "filePath": it["file_path"],
+                "caption": it.get("caption", ""),
+                "reason": it.get("reason", ""),
+                "model": it.get("model", ""),
+            }))
+        return rows
+    finally:
+        await db.disconnect()
+
+
+async def _list_screenshots(video_id: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.screenshot.find_many(
+            where={"videoId": video_id}, order={"timestamp": "asc"})
+    finally:
+        await db.disconnect()
+
+
+async def _delete_screenshot(screenshot_id: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.screenshot.delete_many(where={"id": screenshot_id})
+    finally:
+        await db.disconnect()
+
+
+def create_transcript_edit(**kwargs):
+    return asyncio.run(_create_transcript_edit(**kwargs))
+
+
+def upsert_stage_gate(**kwargs):
+    return asyncio.run(_upsert_stage_gate(**kwargs))
+
+
+def get_stage_gate(video_id: str, stage: str):
+    return asyncio.run(_get_stage_gate(video_id, stage))
+
+
+def list_stage_gates(video_id: str):
+    return asyncio.run(_list_stage_gates(video_id))
+
+
+def upsert_transcript_draft(**kwargs):
+    return asyncio.run(_upsert_transcript_draft(**kwargs))
+
+
+def get_transcript_draft(video_id: str, kind: str):
+    return asyncio.run(_get_transcript_draft(video_id, kind))
+
+
+def delete_transcript_draft(video_id: str, kind: str):
+    return asyncio.run(_delete_transcript_draft(video_id, kind))
+
+
+def replace_screenshots(video_id: str, items: list[dict]):
+    return asyncio.run(_replace_screenshots(video_id, items))
+
+
+def list_screenshots(video_id: str):
+    return asyncio.run(_list_screenshots(video_id))
+
+
+def delete_screenshot(screenshot_id: int):
+    return asyncio.run(_delete_screenshot(screenshot_id))
+
+
+def list_transcript_edits(video_id: str, kind: str = "transcript"):
+    return asyncio.run(_list_transcript_edits(video_id, kind=kind))
+
+
+def get_transcript_edit(video_id: str, version: int, kind: str = "transcript"):
+    return asyncio.run(_get_transcript_edit(video_id, version, kind=kind))
+
+
+def rollback_transcript_edit(video_id: str, version: int, kind: str = "transcript"):
+    return asyncio.run(_rollback_transcript_edit(video_id, version, kind=kind))
 
 
 # ─── Stream briefs ─────────────────────────────────────────────────
@@ -719,6 +1161,15 @@ async def _update_news_item_enrichment(
         await db.disconnect()
 
 
+async def _get_news_image(image_id: int):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.newsimage.find_unique(where={"id": image_id})
+    finally:
+        await db.disconnect()
+
+
 async def _list_news_images(limit: int = 100):
     db = Prisma()
     await db.connect()
@@ -732,6 +1183,10 @@ async def _list_news_images(limit: int = 100):
 
 def get_news_item(item_id: int):
     return asyncio.run(_get_news_item(item_id))
+
+
+def get_news_image(image_id: int):
+    return asyncio.run(_get_news_image(image_id))
 
 
 def find_similar_image(concept_embedding: list[float], threshold: float):
@@ -754,3 +1209,30 @@ def update_news_item_enrichment(item_id, expanded_text, expanded_model, expanded
 
 def list_news_images(limit: int = 100):
     return asyncio.run(_list_news_images(limit))
+
+
+async def _apply_editor_change(item_id: int, field: str, value, tool_call_id: str):
+    """Async inner: update one NewsItem field."""
+    allowed = {"headline", "quote", "expandedText", "imageId", "tags"}
+    if field not in allowed:
+        raise ValueError(f"field {field!r} not in allowed set {sorted(allowed)}")
+    if field == "tags" and not isinstance(value, str):
+        value = json.dumps(value, ensure_ascii=False)
+
+    db = Prisma()
+    await db.connect()
+    try:
+        existing = await db.newsitem.find_unique(where={"id": item_id})
+        if existing is None:
+            raise LookupError(f"NewsItem {item_id} not found")
+        return await db.newsitem.update(
+            where={"id": item_id},
+            data={field: value},
+        )
+    finally:
+        await db.disconnect()
+
+
+def apply_editor_change(item_id: int, field: str, value, tool_call_id: str):
+    """Sync wrapper for the editor-apply endpoint. Returns the updated row."""
+    return asyncio.run(_apply_editor_change(item_id, field, value, tool_call_id))

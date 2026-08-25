@@ -72,13 +72,14 @@
   <!-- Version bust — increment when any of the static assets change, so
        browsers don't serve stale JS/CSS. In production this would be a
        build-time hash; for localhost a manual bump is fine. -->
-  <link rel="stylesheet" href="/static/styles.css?v=7" />
+  <link rel="stylesheet" href="/static/styles.css?v=11" />
   <!-- Our app must be defined BEFORE Alpine walks the DOM, otherwise
        x-data="app()" resolves to `undefined` and every expression breaks. -->
-  <script src="/static/i18n.js?v=7"></script>
-  <script src="/static/assistant-panel.js?v=7"></script>
-  <script src="/static/assistant-tab.js?v=7"></script>
-  <script src="/static/app.js?v=7"></script>
+  <script src="/static/i18n.js?v=11"></script>
+  <script src="/static/assistant-panel.js?v=11"></script>
+  <script src="/static/app.js?v=13"></script>
+  <script src="/static/editor-inline.js"></script>
+  <script src="/static/editor-workspace.js?v=8"></script>
 </head>
 <body class="font-sans bg-bg text-ink antialiased" :lang="lang">
 <a href="#main-content" class="sr-skip" x-text="t('a11y.skip_to_content')">К содержимому</a>
@@ -223,7 +224,10 @@
         <span x-text="t('label.model').toLowerCase()"></span>
         <select x-model="form.model" class="vt-select-mini">
           <option value="">sonnet-4.6</option>
-          <option value="opus">opus-4.7</option>
+          <option value="opus5">opus-5</option>
+          <option value="opus48">opus-4.8</option>
+          <option value="opus47">opus-4.7</option>
+          <option value="sonnet5">sonnet-5</option>
           <option value="sonnet">sonnet-4.6</option>
           <option value="haiku">haiku-4.5</option>
         </select>
@@ -462,6 +466,11 @@
     </template>
 
     <div x-show="result.brief" class="border-t border-ink-200 pt-5">
+      <div class="flex justify-end mb-3">
+        <button x-show="result.video_id" @click="openTranscriptEditor(result.video_id)"
+                class="text-[11px] text-ink-500 hover:text-ink"
+                title="Открыть полную расшифровку в AI-редакторе">подробнее →</button>
+      </div>
       <article class="text-[14px] leading-relaxed">
         <template x-for="sec in splitBriefSections(result.brief)" :key="sec.title">
           <div class="mb-6">
@@ -508,7 +517,7 @@
     <div x-show="historyVideos.length > 0" class="card" style="overflow: hidden;">
       <template x-for="(h, i) in historyVideos" :key="h.id">
         <button @click="loadVideo(h.id)" class="row-h w-full text-left grid items-center"
-                style="padding: 14px 20px; grid-template-columns: 1fr auto auto auto; gap: 24px;"
+                style="padding: 14px 20px; grid-template-columns: 1fr auto auto auto auto; gap: 24px;"
                 :style="i > 0 ? 'border-top: 1px solid var(--line);' : ''">
           <div class="min-w-0">
             <div class="truncate" style="font-size: 14.5px; font-weight: 500; margin-bottom: 2px;" x-text="h.title"></div>
@@ -522,6 +531,10 @@
             <span x-show="h.total_cost">$<span x-text="(h.total_cost || 0).toFixed(4)"></span></span>
             <span x-show="!h.total_cost" style="color: var(--mute-2);">—</span>
           </div>
+          <span @click.stop="openTranscriptEditor(h.id)"
+                class="text-[11px] text-ink-500 hover:text-ink"
+                style="cursor: pointer; white-space: nowrap;"
+                title="Открыть расшифровку в AI-редакторе">подробнее</span>
         </button>
       </template>
     </div>
@@ -979,7 +992,7 @@
       <!-- Cards: 2-column compact -->
       <div x-show="visibleDraftNews.length > 0" class="vt-news-grid">
         <template x-for="item in visibleDraftNews" :key="item.id">
-          <article class="card vt-news-card" :style="item.duplicate_of_id ? 'opacity: 0.65;' : ''" @click="openNewsDetail(item.id)">
+          <article class="card vt-news-card" :style="item.duplicate_of_id ? 'opacity: 0.65;' : ''" data-news-card @click="openNewsDetail(item.id)">
             <!-- Top meta -->
             <div class="flex items-center gap-2 mb-2 flex-wrap" style="font-size: 11px;">
               <span x-show="item.category" class="chip" :style="categoryChipStyle(item.category)">
@@ -1027,6 +1040,7 @@
                 ✓ <span x-text="t('btn.approve').toLowerCase()"></span>
               </button>
             </div>
+            <div class="editor-actions-slot" :data-item-id="item.id"></div>
           </article>
         </template>
       </div>
@@ -1292,7 +1306,7 @@
     <!-- Cards grid: 2 columns, editorial style with category accent -->
     <div x-show="visibleNews.length > 0" class="vt-news-grid">
       <template x-for="item in visibleNews" :key="item.id">
-        <article class="card vt-news-card" @click="openNewsDetail(item.id)">
+        <article class="card vt-news-card" data-news-card @click="openNewsDetail(item.id)">
           <!-- Top meta row -->
           <div class="flex items-center gap-2 mb-2.5 flex-wrap" style="font-size: 11px;">
             <span class="chip" :style="categoryChipStyle(item.category)" x-show="item.category">
@@ -1352,6 +1366,7 @@
               </div>
             </template>
           </div>
+          <div class="editor-actions-slot" :data-item-id="item.id"></div>
         </article>
       </template>
     </div>
@@ -1359,139 +1374,193 @@
 
 </div><!-- /TAB: НОВОСТИ -->
 
+
 <!-- ═══════════════════════════════════════════════════════════ -->
-<!-- TAB: АССИСТЕНТ (full page, sessions sidebar) ─────────────── -->
+<!-- TAB: AI EDITOR — workspace (items list + selected item editor) -->
 <!-- ═══════════════════════════════════════════════════════════ -->
-<div x-show="activeView === 'assistant'" x-cloak class="space-y-12 fade-in">
-  <div x-data="assistantTab()" x-init="init()">
+<div id="editor-section" x-show="activeView === 'editor'" x-cloak class="fade-in">
 
-    <!-- Editorial header -->
-    <header style="margin-bottom: 28px;">
-      <div class="label" style="color: var(--acc);" x-text="t('hero.assistant.eyebrow')"></div>
-      <h1 class="serif" style="font-size: 48px; line-height: 1.05; margin: 10px 0 6px; letter-spacing: -0.02em;">
-        <span x-text="t('hero.assistant.title')"></span><span style="font-style: italic; color: var(--acc);" x-text="' ' + t('hero.assistant.accent')"></span>
-      </h1>
-      <p style="color: var(--mute); font-size: 15px; max-width: 640px; margin: 0;" x-text="t('hero.assistant.sub')"></p>
-    </header>
+  <header style="margin-bottom: 20px;">
+    <div class="label" style="color: var(--acc);">AI Editor</div>
+    <h1 class="serif" style="font-size: 40px; line-height: 1.05; margin: 8px 0 4px; letter-spacing: -0.02em;">
+      AI <span style="font-style: italic; color: var(--acc);">Editor</span>
+    </h1>
+    <p style="color: var(--mute); font-size: 14px; margin: 0;">Рабочее место для редактирования news items и расшифровок с AI-assist.</p>
+  </header>
 
-    <!-- Layout: sessions sidebar + chat area -->
-    <div class="vt-assistant-grid">
+  <!-- Source toggle: news items vs video transcripts. Both reuse the 2-col chrome. -->
+  <div class="editor-source-toggle" style="display:flex; gap:8px; margin-bottom:16px;">
+    <button type="button" id="editor-src-news"
+            style="padding:6px 14px; border:1px solid var(--line); border-radius:8px; font-size:13px; cursor:pointer;">Новости</button>
+    <button type="button" id="editor-src-transcripts"
+            style="padding:6px 14px; border:1px solid var(--line); border-radius:8px; font-size:13px; cursor:pointer;">Расшифровки</button>
+    <button type="button" id="editor-src-artifacts"
+            style="padding:6px 14px; border:1px solid var(--line); border-radius:8px; font-size:13px; cursor:pointer;">Артефакты</button>
+  </div>
 
-      <!-- Sessions sidebar -->
-      <aside>
-        <div class="label" style="margin-bottom: 12px;">сессии</div>
-        <button @click="newChat()" class="btn" style="width: 100%; justify-content: flex-start; margin-bottom: 12px;">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 2v8M2 6h8" stroke-linecap="round"/></svg>
-          <span>Новый чат</span>
-        </button>
+  <div class="editor-workspace" id="editor-pane-news">
 
-        <div class="flex flex-col" style="gap: 2px;">
-          <template x-for="s in sessions" :key="s.id">
-            <button @click="openSession(s.id)"
-                    style="text-align: left; padding: 8px 12px; border-radius: 8px; font-size: 13px;"
-                    :style="activeSessionId === s.id
-                      ? 'background: var(--panel); color: var(--ink); font-weight: 500;'
-                      : 'background: transparent; color: var(--mute); font-weight: 400;'">
-              <div class="truncate" x-text="s.title || 'Без темы'"></div>
-              <div class="mono" style="font-size: 10.5px; color: var(--mute-2); margin-top: 1px;" x-text="fmtRelTime(s.updated_at)"></div>
-            </button>
-          </template>
-          <div x-show="sessions.length === 0" style="font-size: 12px; color: var(--mute); padding: 8px 12px;">
-            История появится после первого диалога.
+    <!-- LEFT COLUMN: filters + items list -->
+    <aside class="editor-workspace-left">
+      <div class="editor-filters">
+        <label>
+          <span class="editor-filter-label">Статус</span>
+          <select id="editor-filter-status">
+            <option value="">все</option>
+            <option value="draft">draft</option>
+            <option value="approved">approved</option>
+            <option value="rejected">rejected</option>
+            <option value="exported">exported</option>
+          </select>
+        </label>
+        <label>
+          <span class="editor-filter-label">Стрим</span>
+          <select id="editor-filter-stream">
+            <option value="">все</option>
+          </select>
+        </label>
+        <label>
+          <span class="editor-filter-label">Поиск</span>
+          <input id="editor-filter-q" type="search" placeholder="в заголовке или цитате" />
+        </label>
+      </div>
+
+      <div class="editor-items-meta" id="editor-items-meta">—</div>
+      <div class="editor-items-list" id="editor-items-list">
+        <em>Загружаю…</em>
+      </div>
+    </aside>
+
+    <!-- RIGHT COLUMN: selected item workspace -->
+    <section class="editor-workspace-right" id="editor-workspace-right">
+      <div class="editor-empty" id="editor-empty">
+        ← Выбери карточку слева
+      </div>
+
+      <div class="editor-item" id="editor-item" style="display: none;">
+        <div class="editor-item-header">
+          <h2 id="editor-item-title">Item #…</h2>
+          <span class="editor-item-status" id="editor-item-status"></span>
+        </div>
+
+        <div class="editor-item-body">
+          <div class="editor-field"><div class="editor-field-label">Заголовок</div><div class="editor-field-value" id="editor-field-headline"></div></div>
+          <div class="editor-field"><div class="editor-field-label">Цитата</div><div class="editor-field-value" id="editor-field-quote"></div></div>
+          <div class="editor-field"><div class="editor-field-label">Расширенный текст</div><div class="editor-field-value" id="editor-field-expanded"><em>(не сгенерирован)</em></div></div>
+          <div class="editor-field-row">
+            <div class="editor-field"><div class="editor-field-label">Теги</div><div class="editor-field-value" id="editor-field-tags"></div></div>
+            <div class="editor-field"><div class="editor-field-label">Attribution</div><div class="editor-field-value" id="editor-field-attrib"></div></div>
+          </div>
+          <div class="editor-field-row">
+            <div class="editor-field"><div class="editor-field-label">Категория</div><div class="editor-field-value" id="editor-field-category"></div></div>
+            <div class="editor-field"><div class="editor-field-label">Confidence</div><div class="editor-field-value" id="editor-field-confidence"></div></div>
+          </div>
+          <div class="editor-field" id="editor-field-image-wrap" style="display: none;">
+            <div class="editor-field-label">Иллюстрация</div>
+            <img id="editor-field-image" class="editor-image-thumb" alt="" />
+            <div class="editor-field-value" id="editor-field-image-concept"></div>
           </div>
         </div>
-      </aside>
 
-      <!-- Chat -->
-      <div>
-        <div class="card" style="padding: 0; min-height: 520px; display: flex; flex-direction: column;">
+        <div class="editor-tz">
+          <label for="editor-tz-input" class="editor-field-label">Контекст ТЗ</label>
+          <textarea id="editor-tz-input" rows="3" placeholder="напр.: «переписать под деловой тон, убрать кликбейт»"></textarea>
+          <div class="editor-tz-hint">Подставляется в параметр style/tone соответствующих AI-тулзов.</div>
+        </div>
 
-          <!-- Messages scroller -->
-          <div class="scroll-thin" style="flex: 1; padding: 20px 24px; overflow-y: auto; max-height: 560px;" x-ref="scroller">
+        <div class="editor-actions-bar">
+          <button type="button" data-tool="improve_headline">✨ Заголовок</button>
+          <button type="button" data-tool="rewrite_quote">✍ Цитата</button>
+          <button type="button" data-tool="expand_text">📝 Расширить</button>
+          <button type="button" data-tool="suggest_tags">🏷 Теги</button>
+          <button type="button" data-tool="regenerate_image">🖼 Картинка</button>
+        </div>
 
-            <!-- Empty state with suggestions -->
-            <div x-show="messages.length === 0" style="color: var(--mute); padding: 20px 0;">
-              <div style="font-size: 14px; margin-bottom: 16px;">
-                Я знаю про пайплайн, БД, настройки и коды ошибок. Спроси что-то — или попроси сделать.
-              </div>
-              <div class="flex flex-wrap gap-1.5">
-                <template x-for="s in suggestions" :key="s">
-                  <button class="chip" style="cursor: pointer;" @click="pickSuggestion(s)" x-text="s"></button>
-                </template>
-              </div>
-            </div>
+        <div class="editor-preview-container" id="editor-preview-container"></div>
 
-            <!-- Messages -->
-            <template x-for="(m, idx) in messages" :key="idx">
-              <div style="margin-bottom: 20px; display: flex; gap: 12px;">
-                <div class="flex items-center justify-center flex-shrink-0"
-                     style="width: 26px; height: 26px; border-radius: 999px; margin-top: 2px;"
-                     :style="m.role === 'user'
-                       ? 'background: var(--ink); color: #fff;'
-                       : 'background: var(--acc-soft); color: var(--acc-ink);'">
-                  <span x-show="m.role === 'user'" style="font-size: 11px; font-weight: 600;">Ты</span>
-                  <span x-show="m.role === 'assistant'" class="serif" style="font-size: 15px; font-style: italic;">a</span>
-                </div>
-                <div style="flex: 1; min-width: 0;">
-                  <div class="label" style="margin-bottom: 4px;">
-                    <span x-show="m.role === 'user'">Ты</span>
-                    <span x-show="m.role === 'assistant'" x-text="t('asst.title')"></span>
-                    <span x-show="m.cache_hit" style="color: var(--ok); margin-left: 8px;" x-text="'💾 ' + t('asst.from_cache')"></span>
-                    <span x-show="m.cost_usd" class="mono" style="color: var(--mute-2); margin-left: 8px;" x-text="'$' + (m.cost_usd||0).toFixed(4)"></span>
-                  </div>
-                  <div class="prose" style="font-size: 14px;" x-html="renderMd(m.content)"></div>
-                  <template x-if="m.tool_events && m.tool_events.length">
-                    <details style="font-size: 11px; color: var(--mute); margin-top: 6px;">
-                      <summary style="cursor: pointer;">Инструменты (<span x-text="m.tool_events.length"></span>)</summary>
-                      <div class="mt-1" style="display: flex; flex-direction: column; gap: 4px;">
-                        <template x-for="ev in m.tool_events" :key="ev.id">
-                          <div class="mono" style="font-size: 10.5px; background: var(--panel); border-radius: 6px; padding: 4px 8px;">
-                            <div><span style="color: var(--mute-2);">→</span> <span style="font-weight: 600;" x-text="ev.name"></span> <span style="color: var(--mute);" x-text="JSON.stringify(ev.args)"></span></div>
-                            <div :style="ev.result?.ok ? 'color: var(--ok);' : 'color: var(--bad);'" x-text="(ev.result?.ok ? '✓' : '✗') + ' ' + (ev.result?.msg || ev.result?.error || JSON.stringify(ev.result))"></div>
-                          </div>
-                        </template>
-                      </div>
-                    </details>
-                  </template>
-                </div>
-              </div>
-            </template>
+        <details class="editor-collapse">
+          <summary>История правок по этому итему</summary>
+          <div class="editor-item-history" id="editor-item-history">—</div>
+        </details>
 
-            <div x-show="streaming" class="flex items-center gap-2" style="font-size: 13px; color: var(--mute);">
-              <span class="spinner"></span>
-              <span x-text="streamingStatus || t('asst.thinking')"></span>
-            </div>
+        <details class="editor-collapse">
+          <summary>История всех сессий AI Editor</summary>
+          <div id="editor-actions-history" class="editor-history-box">
+            <em>Загружаю…</em>
           </div>
+        </details>
 
-          <!-- Input -->
-          <div style="border-top: 1px solid var(--line); padding: 16px;">
-            <div class="flex gap-2.5" style="align-items: stretch;">
-              <textarea
-                class="text-input"
-                rows="1"
-                x-model="input"
-                @keydown.enter.prevent="if (!$event.shiftKey) send()"
-                :disabled="streaming"
-                :placeholder="t('placeholder.assistant')"
-                style="resize: none; flex: 1; min-height: 44px;"></textarea>
-              <button class="btn btn-primary" :disabled="streaming || !input.trim()" @click="send()" style="padding: 0 18px;">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 8h12M10 4l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </button>
-            </div>
-            <div class="flex gap-3" style="font-size: 11px; color: var(--mute-2); margin-top: 8px; align-items: center;">
-              <span><span class="kbd">⏎</span> отправить</span>
-              <span><span class="kbd">⇧⏎</span> новая строка</span>
-              <div style="flex: 1;"></div>
-              <span x-show="lastContextChars" class="mono" x-text="t('asst.context_chars') + ': ' + lastContextChars + ' симв.'"></span>
-              <span x-show="totalCost > 0" class="mono" x-text="'$' + totalCost.toFixed(4)"></span>
-            </div>
+        <details class="editor-collapse">
+          <summary>Настройки редактора по умолчанию</summary>
+          <div id="editor-defaults" class="editor-defaults-box">
+            <em>Загружаю…</em>
           </div>
+        </details>
+      </div>
+    </section>
+
+  </div><!-- /#editor-pane-news -->
+
+  <!-- TRANSCRIPTS PANE: edit a video's full transcript with AI -->
+  <div class="editor-workspace" id="editor-pane-transcripts" style="display:none;">
+    <aside class="editor-workspace-left">
+      <div class="editor-items-meta" id="tx-videos-meta">—</div>
+      <div class="editor-items-list" id="tx-videos-list"><em>Загружаю…</em></div>
+    </aside>
+
+    <section class="editor-workspace-right">
+      <div class="editor-empty" id="tx-empty">← Выбери видео слева</div>
+
+      <div class="editor-item" id="tx-item" style="display:none;">
+        <div class="editor-item-header">
+          <h2 id="tx-title">—</h2>
+        </div>
+        <div id="doc-block-transcript" class="doc-block"></div>
+        <div id="doc-block-brief" class="doc-block"></div>
+        <div id="doc-block-essence" class="doc-block"></div>
+        <div id="tx-screenshots" class="doc-block"></div>
+        <div class="doc-pipeline-note" data-i18n="editor.docs.pipelineNote"
+             style="margin-top:18px; padding-top:12px; border-top:1px dashed var(--line); color:var(--mute); font-size:13px;">
+          ▸ Этот набор → вход для ТЗ / Алгоритмов / AI-скиллов
         </div>
       </div>
-    </div>
+    </section>
+  </div><!-- /#editor-pane-transcripts -->
 
-  </div><!-- /assistantTab() -->
-</div><!-- /TAB: АССИСТЕНТ -->
+  <!-- ARTIFACTS PANE: durable expand (ТЗ/ресерч/репорт/UI-UX/алгоритмы/AI-скиллы) -->
+  <div class="editor-workspace" id="editor-pane-artifacts" style="display:none;">
+    <aside class="editor-workspace-left">
+      <div class="editor-items-meta" id="af-videos-meta">—</div>
+      <div class="editor-items-list" id="af-videos-list"><em>Загружаю…</em></div>
+    </aside>
+    <section class="editor-workspace-right">
+      <div class="editor-empty" id="af-empty">← Выбери видео слева</div>
+      <div class="editor-item" id="af-item" style="display:none;">
+        <div class="editor-item-header"><h2 id="af-title">—</h2></div>
+        <div id="af-stepper" style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:10px; font-size:12px;"></div>
+        <div id="af-warning" style="display:none; padding:8px 12px; margin-bottom:8px; border-radius:6px; background:#fffbeb; color:#92400e; font-size:12px;"></div>
+        <div class="editor-actions-bar" id="af-modes"></div>
+        <div style="display:flex; gap:10px; align-items:center; margin:8px 0; font-size:12px; flex-wrap:wrap;">
+          <label style="color:var(--mute);">контекст:</label>
+          <select id="af-context">
+            <option value="both">бриф + расшифровка</option>
+            <option value="brief">бриф</option>
+            <option value="transcript">расшифровка</option>
+          </select>
+          <label style="color:var(--mute);">модель:</label>
+          <select id="af-model" style="min-width:140px;"></select>
+          <button type="button" id="af-generate" style="cursor:pointer; padding:5px 14px;">сгенерировать</button>
+        </div>
+        <div id="af-status" style="font-size:12px; color:var(--mute); margin-bottom:8px;"></div>
+        <pre id="af-text" class="tx-text" style="white-space:pre-wrap; font-family:inherit; font-size:13px; line-height:1.55; max-height:420px; overflow-y:auto; background:var(--panel); padding:14px; border-radius:8px;"></pre>
+        <div id="af-export" style="margin-top:8px; font-size:12px;"></div>
+        <div id="af-checklist" style="margin-top:14px;"></div>
+        <div id="af-hint" style="margin-top:10px; font-size:12px; color:var(--mute); font-style:italic;"></div>
+      </div>
+    </section>
+  </div><!-- /#editor-pane-artifacts -->
+
+</div><!-- /TAB: AI EDITOR -->
 
 <!-- ═══════════════════════════════════════════════════════════ -->
 <!-- TAB: НАСТРОЙКИ ──────────────────────────────────────────── -->
@@ -1951,8 +2020,10 @@
         <span class="text-[13px] text-ink-600">модель Claude для видео</span>
         <select x-model="settings.default_brief_model" class="text-[13px] border border-ink-200 rounded px-2 py-1 bg-white mono">
           <option value="">автоматически (env / sonnet-4.6)</option>
+          <option value="claude-opus-5">claude-opus-5</option>
+          <option value="claude-opus-4-8">claude-opus-4-8</option>
           <option value="claude-opus-4-7">claude-opus-4-7</option>
-          <option value="claude-opus-4-6">claude-opus-4-6</option>
+          <option value="claude-sonnet-5">claude-sonnet-5</option>
           <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
           <option value="claude-haiku-4-5">claude-haiku-4-5</option>
         </select>
@@ -2494,6 +2565,7 @@
     </div>
   </div>
 </div>
+
 
 </body>
 </html>
