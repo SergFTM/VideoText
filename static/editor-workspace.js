@@ -785,7 +785,7 @@
   const AF_ORDER = ['research', 'report', 'spec', 'uiux', 'ai_algorithms', 'ai_skills'];
   const AF_LABEL = { research: 'Ресерч', report: 'Репорт', spec: 'ТЗ', uiux: 'UI/UX', ai_algorithms: 'Алгоритмы', ai_skills: 'AI-скиллы' };
   const AF_GATE_PRED = { report: 'research', spec: 'report', ai_algorithms: 'spec', ai_skills: 'ai_algorithms' };
-  const AF_CHECKLIST_STAGES = ['research', 'report', 'spec', 'ai_algorithms'];
+  const AF_CHECKLIST_STAGES = ['research', 'report', 'spec', 'uiux', 'ai_algorithms', 'ai_skills'];
   const AF_HINT = {
     research: 'Если ресерч показал, что идея нежизнеспособна → вернись к брифу, переформулируй.',
     report: 'Если репорт без однозначной рекомендации → доп. ресерч по открытым вопросам.',
@@ -864,6 +864,25 @@
     renderStepper();
     renderChecklist();
     renderWarningAndHint();
+    renderVersionPicker(mode);
+  }
+
+  async function renderVersionPicker(stage) {
+    const sel = $('af-version');
+    let versions = [];
+    try { versions = (await fetchJSON(
+      `/videos/${state.afSelectedId}/expansions/${stage}/versions`)).versions || []; }
+    catch (_) { sel.style.display = 'none'; return; }
+    if (versions.length < 2) { sel.style.display = 'none'; return; }
+    sel.style.display = '';
+    sel.innerHTML = versions.map((v, i) =>
+      `<option value="${v.version}"${i === 0 ? ' selected' : ''}>v${v.version} · ${escapeHtml(v.model)} · ${v.chars} симв.</option>`
+    ).join('');
+    sel.onchange = async () => {
+      const e = await fetchJSON(
+        `/videos/${state.afSelectedId}/expansions/${stage}?version=${sel.value}`);
+      $('af-text').textContent = e.content_md || '';
+    };
   }
 
   function renderArtifactStatus(e) {
@@ -874,14 +893,33 @@
     else box.textContent = '✅ готово';
   }
 
-  async function generateArtifact() {
+  async function generateArtifact(override = false) {
     const id = state.afSelectedId, mode = state.afMode;
     if (!id) return;
-    await fetchJSON(`/videos/${id}/expand-spec`, {
+    const resp = await fetch(`/videos/${id}/expand-spec`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, model: $('af-model').value, context: $('af-context').value }),
+      body: JSON.stringify({
+        mode, model: $('af-model').value, context: $('af-context').value, override,
+      }),
     });
-    state.afExpansions[mode] = { mode, status: 'running', content_md: (state.afExpansions[mode] || {}).content_md || '' };
+    // The pipeline's one hard stop: a refuted problem statement blocks ТЗ.
+    if (resp.status === 409) {
+      const body = await resp.json().catch(() => ({}));
+      if (confirm((body.detail || 'Этап заблокирован вердиктом репорта.')
+          + '\n\nВсё равно сгенерировать ТЗ?')) {
+        return generateArtifact(true);
+      }
+      return;
+    }
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      alert('Не удалось запустить генерацию: ' + (body.detail || resp.status));
+      return;
+    }
+    state.afExpansions[mode] = {
+      mode, status: 'running',
+      content_md: (state.afExpansions[mode] || {}).content_md || '',
+    };
     renderArtifactStatus(state.afExpansions[mode]);
     startArtifactPolling();
   }
@@ -951,7 +989,10 @@
       ${items.length ? items.map((it, i) => `
         <label style="display:flex; gap:8px; align-items:flex-start; font-size:12px; margin:3px 0;">
           <input type="checkbox" data-ci="${i}" ${it.checked ? 'checked' : ''}>
-          <span>${escapeHtml(it.label)}${it.ai_note ? ` <em style="color:var(--mute-2);">— ${escapeHtml(it.ai_note)}</em>` : ''}</span>
+          <span>${escapeHtml(it.label)}
+            ${it.kind === 'human' ? ' <em style="color:var(--mute-2);">— решает человек, AI не оценивает</em>'
+              : (it.ai_note ? ` <em style="color:var(--mute-2);">— ${escapeHtml(it.ai_note)}</em>` : '')}
+          </span>
         </label>`).join('') : '<em style="font-size:12px; color:var(--mute);">нет оценки — нажми «AI-оценка»</em>'}`;
     $('af-assess').addEventListener('click', () => assessStage(stage));
     box.querySelectorAll('[data-ci]').forEach(cb =>
@@ -960,6 +1001,18 @@
 
   function renderWarningAndHint() {
     const stage = state.afMode;
+
+    const VERDICT_RU = {
+      confirmed: ['✓ проблематика подтверждена', '#166534'],
+      partial: ['◐ проблематика подтверждена частично', '#92400e'],
+      refuted: ['✗ проблематика НЕ подтверждена — ТЗ на этом основании писать нельзя', '#b91c1c'],
+    };
+    const vb = $('af-verdict');
+    const rep = state.afExpansions && state.afExpansions.report;
+    const v = rep && rep.verdict && VERDICT_RU[rep.verdict];
+    if (v) { vb.style.display = 'block'; vb.textContent = v[0]; vb.style.color = v[1]; }
+    else { vb.style.display = 'none'; }
+
     const pred = AF_GATE_PRED[stage];
     const w = $('af-warning');
     if (pred && !gateClosed(pred)) {
