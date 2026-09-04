@@ -102,3 +102,41 @@ def test_docs_routes_registered():
     # legacy transcript aliases must still exist
     assert "/videos/{video_id}/transcript" in paths
     assert "/videos/{video_id}/transcript/edits/apply" in paths
+
+
+# ─── Expansion markdown download ───────────────────────────────────
+# The UI has always rendered a ".md" link next to ".pdf" for artifacts, but the
+# route was never registered — the request fell through to the bare "{mode}"
+# route, where mode="research.md" fails ExpandMode's Literal validation and the
+# user got a 422 JSON body instead of a file.
+
+class _DoneExpansion:
+    contentMd = "# Ресерч\n\nтело артефакта"
+    sourceTitle = "бриф"
+
+
+def test_expansion_md_route_registered():
+    paths = {r.path for r in app.routes}
+    assert "/videos/{video_id}/expansions/{mode}.md" in paths
+    assert "/videos/{video_id}/expansions/{mode}.pdf" in paths
+
+
+def test_expansion_md_download_returns_markdown(monkeypatch):
+    import server
+    monkeypatch.setattr(server, "get_latest_done_expansion",
+                        lambda v, m: _DoneExpansion())
+    from fastapi.testclient import TestClient
+    r = TestClient(server.app).get("/videos/vid1/expansions/research.md")
+    assert r.status_code == 200, f"было 422 — маршрута .md не существовало: {r.text[:200]}"
+    assert r.headers["content-type"].startswith("text/markdown")
+    assert "attachment" in r.headers["content-disposition"]
+    assert "research-vid1.md" in r.headers["content-disposition"]
+    assert r.text == _DoneExpansion.contentMd
+
+
+def test_expansion_md_404_when_no_artifact(monkeypatch):
+    import server
+    monkeypatch.setattr(server, "get_latest_done_expansion", lambda v, m: None)
+    from fastapi.testclient import TestClient
+    r = TestClient(server.app).get("/videos/vid1/expansions/report.md")
+    assert r.status_code == 404

@@ -836,9 +836,27 @@ def read_expansion_versions(video_id: str, mode: ExpandMode) -> dict:
     }
 
 
-# NOTE: the `.pdf` route MUST be declared before the bare `{mode}` route.
-# A path param matches dots, so `{mode}` would otherwise capture "spec.pdf"
-# and shadow this route (Starlette matches in declaration order).
+# NOTE: the `.md` and `.pdf` routes MUST be declared before the bare `{mode}`
+# route. A path param matches dots, so `{mode}` would otherwise capture
+# "spec.pdf" and shadow them (Starlette matches in declaration order).
+@app.get("/videos/{video_id}/expansions/{mode}.md")
+def export_expansion_md(video_id: str, mode: ExpandMode):
+    """Markdown counterpart of the PDF export — the artifact's own text.
+
+    The UI has always offered this link next to `.pdf`; without the route the
+    request fell through to the bare `{mode}` handler, where "research.md"
+    fails ExpandMode's Literal validation and the user got a 422 JSON body.
+    """
+    e = get_latest_done_expansion(video_id, mode)
+    if not e:
+        raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
+    return Response(
+        content=e.contentMd or "",
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{mode}-{video_id}.md"'},
+    )
+
+
 @app.get("/videos/{video_id}/expansions/{mode}.pdf")
 def export_expansion_pdf(video_id: str, mode: ExpandMode):
     """Render a saved expansion as a PDF. Available for all modes, but the UI
