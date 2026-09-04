@@ -1280,6 +1280,25 @@ def read_doc_draft(video_id: str, kind: str):
     return _draft_to_dict(d) if d else None
 
 
+@app.get("/videos/{video_id}/pending-drafts")
+def read_pending_drafts(video_id: str) -> dict:
+    """Drafts that exist but were never applied.
+
+    `_current_doc_text` reads applied TranscriptEdit rows only, so an unapplied
+    draft is invisible to the expand prompt. The UI warns before generating.
+    """
+    out = []
+    for kind in ("transcript", "brief", "essence"):
+        d = get_transcript_draft(video_id, kind)
+        if d and (d.contentMd or "").strip():
+            out.append({
+                "kind": kind,
+                "chars": len(d.contentMd),
+                "updated_at": d.updatedAt.isoformat(),
+            })
+    return {"drafts": out}
+
+
 @app.get("/videos/{video_id}/docs/{kind}/draft/download.pdf")
 def export_doc_draft_pdf(video_id: str, kind: str):
     _require_kind(kind)

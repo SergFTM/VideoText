@@ -41,6 +41,7 @@
     afExpansions: {},
     afPoll: null,
     afGates: {},
+    afDrafts: [],
   };
 
   function $(id) { return document.getElementById(id); }
@@ -919,6 +920,8 @@
   async function loadArtifactGates(id) {
     try { state.afGates = await fetchJSON(`/videos/${id}/stage-gates`); }
     catch (_) { state.afGates = {}; }
+    try { state.afDrafts = (await fetchJSON(`/videos/${id}/pending-drafts`)).drafts || []; }
+    catch (_) { state.afDrafts = []; }
   }
 
   function renderStepper() {
@@ -963,6 +966,17 @@
       w.style.display = 'block';
       w.textContent = `⚠ «${AF_LABEL[pred]}» сгенерирован, но его чек-лист готовности ещё не пройден — сгенерировать дальше можно, но лучше сначала проверить через «AI-оценка» внизу.`;
     } else { w.style.display = 'none'; }
+
+    const dw = $('af-draft-warning');
+    const KIND_RU = { transcript: 'расшифровки', brief: 'брифа', essence: 'сути' };
+    const pending = state.afDrafts || [];
+    if (pending.length) {
+      dw.style.display = 'block';
+      dw.textContent = '⚠ Непринятые черновики: '
+        + pending.map(d => `${KIND_RU[d.kind] || d.kind} (${d.chars} симв.)`).join(', ')
+        + ' — в промпт они не попадут. Примени их во вкладке «Расшифровки» или генерируй как есть.';
+    } else { dw.style.display = 'none'; }
+
     $('af-hint').textContent = AF_HINT[stage] || '';
   }
 
