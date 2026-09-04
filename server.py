@@ -618,6 +618,8 @@ class ExpandSpecRequest(BaseModel):
     # Context source: which parts of the video go into the prompt.
     context: Literal["brief", "transcript", "both"] | None = None
     include_transcript: bool = True
+    # Escape hatch for the one hard stop in the pipeline (refuted problem statement).
+    override: bool = False
 
 
 @app.post("/videos/{video_id}/expand-spec")
@@ -630,6 +632,19 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
     if not video.briefs:
         raise HTTPException(status_code=400, detail="У видео нет брифа")
+
+    # The pipeline's only hard stop. docs/task-flow-v2.md §5: "ресерч показал, что
+    # идея нежизнеспособна → стоп; возврат к брифу, переформулировка."
+    if req.mode == "spec" and not req.override:
+        rep = get_expansion(video_id, "report")
+        if rep is not None and getattr(rep, "verdict", None) == "refuted":
+            raise HTTPException(
+                status_code=409,
+                detail="Репорт вынес вердикт «проблематика не подтверждена» — ТЗ на"
+                       " этом основании писать нельзя. Вернись к брифу и переформулируй"
+                       " задачу, либо перегенерируй репорт. Если решение осознанное —"
+                       " повтори запрос с override.",
+            )
 
     key = (video_id, req.mode)
     existing = get_expansion(video_id, req.mode)
