@@ -564,6 +564,27 @@ async def _get_expansion(video_id: str, mode: str):
         await db.disconnect()
 
 
+async def _get_latest_done_expansion(video_id: str, mode: str):
+    """Highest version whose generation actually SUCCEEDED, or None.
+
+    Deliberately different from `_get_expansion`: that one returns the highest
+    version whatever its status, because the UI must keep showing a running or
+    errored latest version. Anything that acts on an artifact's *content* — the
+    refuted-verdict hard stop, the PDF export, the skills bundle — needs the last
+    row that has content and a verdict, otherwise starting a regeneration (which
+    appends an empty `running` row with `verdict=NULL`) would silently switch the
+    hard stop off and leave it off if that regeneration failed."""
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.find_first(
+            where={"videoId": video_id, "mode": mode, "status": "done"},
+            order={"version": "desc"},
+        )
+    finally:
+        await db.disconnect()
+
+
 async def _get_expansion_version(video_id: str, mode: str, version: int):
     db = Prisma()
     await db.connect()
@@ -712,6 +733,10 @@ def sweep_running_expansions() -> int:
 
 def get_expansion(video_id: str, mode: str):
     return asyncio.run(_get_expansion(video_id, mode))
+
+
+def get_latest_done_expansion(video_id: str, mode: str):
+    return asyncio.run(_get_latest_done_expansion(video_id, mode))
 
 
 def get_expansion_version(video_id: str, mode: str, version: int):

@@ -38,16 +38,23 @@ GATE_PREDECESSOR: dict[str, str] = {
 _VERDICT_RE = re.compile(
     r"<!--\s*verdict:\s*(confirmed|partial|refuted)\s*-->", re.IGNORECASE)
 
+# Fenced blocks are illustration, not contract. The report prompt itself lists all
+# three markers with `refuted` last, so a report that restates that legend inside a
+# ``` block near the end would parse as `refuted` under a naive last-wins scan and
+# wrongly hard-block ТЗ. Same fence-awareness as skills_export's heading splitter.
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+
 
 def parse_verdict(md: str | None) -> str | None:
-    """Last verdict marker in the text, lowercased. None if absent or unknown.
+    """Last verdict marker outside fenced code, lowercased. None if absent/unknown.
 
     Last-wins because a model may quote the format in its prose before emitting
-    the real marker at the end.
+    the real marker at the end; fenced regions are dropped first so a quoted
+    legend inside ``` can never outvote the real marker.
     """
     if not md:
         return None
-    matches = _VERDICT_RE.findall(md)
+    matches = _VERDICT_RE.findall(_FENCE_RE.sub("", md))
     return matches[-1].lower() if matches else None
 
 # Readiness checklists (docs/task-flow-v2.md §3), keyed by the stage being assessed.

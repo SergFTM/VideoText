@@ -44,7 +44,8 @@ from main import process_url            # noqa: E402
 from store import (                     # noqa: E402
     create_news_image, create_stream, create_transcript_edit, fail_expansion,
     find_similar_image, finish_expansion, get_all_settings, get_expansion,
-    get_expansion_version, get_news_item, get_stream, get_transcript_edit, get_video, increment_image_reuse,
+    get_expansion_version, get_latest_done_expansion, get_news_item, get_stream,
+    get_transcript_edit, get_video, increment_image_reuse,
     list_expansions, list_expansion_versions, list_news_images, list_news_items, list_stream_briefs,
     get_stage_gate, list_stage_gates, list_streams, list_transcript_edits,
     rollback_transcript_edit, search_news_items, set_settings, start_expansion,
@@ -636,7 +637,10 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
     # The pipeline's only hard stop. docs/task-flow-v2.md §5: "ресерч показал, что
     # идея нежизнеспособна → стоп; возврат к брифу, переформулировка."
     if req.mode == "spec" and not req.override:
-        rep = get_expansion(video_id, "report")
+        # Latest DONE, not latest: `start_expansion` appends an empty `verdict=NULL`
+        # row, so reading the plain latest would let re-running the report silently
+        # switch the stop off (permanently, if that run then errored).
+        rep = get_latest_done_expansion(video_id, "report")
         if rep is not None and getattr(rep, "verdict", None) == "refuted":
             raise HTTPException(
                 status_code=409,
@@ -706,10 +710,17 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         web_search_available=web_search_available,
     )
 
-    search_max_uses = int(settings.get("research_web_search_max_uses") or 5)
+    # NOT `or 5`: a configured 0 is a deliberate kill switch ("0 disables" in
+    # store.DEFAULT_SETTINGS) and must reach web_search_tools, which turns it off.
+    # A garbage value falls back to the default instead of 500-ing the endpoint.
+    try:
+        search_max_uses = int(settings.get("research_web_search_max_uses", 5))
+    except (TypeError, ValueError):
+        search_max_uses = 5
     tools = local_llm.web_search_tools(search_max_uses) if web_search_available else None
 
-    # Mark running (preserves any previous content) BEFORE launching the thread.
+    # Append a new empty `running` version BEFORE launching the thread. Previous
+    # versions stay intact as their own rows; this one is filled in on finish.
     start_expansion(
         video_id=video_id, mode=req.mode, source_title=req.section_title,
         source_md=req.section_md, context_mode=ctx_mode, model=model,
@@ -834,7 +845,8 @@ def export_expansion_pdf(video_id: str, mode: ExpandMode):
     only surfaces the button for research/report (ТЗ / AI-артефакты остаются
     markdown — их скармливают обратно в Cursor/Claude)."""
     from export import markdown_to_pdf
-    e = get_expansion(video_id, mode)
+    # Latest DONE: a running/errored newer row has no content to render.
+    e = get_latest_done_expansion(video_id, mode)
     if not e:
         raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
     title_map = {
@@ -855,7 +867,8 @@ def export_expansion_pdf(video_id: str, mode: ExpandMode):
 def export_skills_bundle(video_id: str):
     """Skills + MCP scaffold + README as one archive."""
     import skills_export
-    e = get_expansion(video_id, "ai_skills")
+    # Latest DONE throughout: a bundle must be built from finished artifacts only.
+    e = get_latest_done_expansion(video_id, "ai_skills")
     if not e or not (e.contentMd or "").strip():
         raise HTTPException(status_code=404, detail="Нет артефакта AI-скиллов")
     skills = skills_export.parse_skills(e.contentMd)
@@ -865,8 +878,8 @@ def export_skills_bundle(video_id: str):
             detail="Не удалось разобрать ни одного скилла — артефакт не соответствует"
                    " формату «## Скилл N.». Перегенерируй стадию AI-скиллы.",
         )
-    spec = get_expansion(video_id, "spec")
-    algos = get_expansion(video_id, "ai_algorithms")
+    spec = get_latest_done_expansion(video_id, "spec")
+    algos = get_latest_done_expansion(video_id, "ai_algorithms")
     video = get_video(video_id)
     blob = skills_export.build_bundle(
         skills,

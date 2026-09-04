@@ -31,3 +31,40 @@ def test_case_and_spacing_tolerant():
 
 def test_unknown_value_is_ignored():
     assert pipeline.parse_verdict("<!-- verdict: maybe -->") is None
+
+
+def test_marker_inside_a_fenced_block_is_ignored():
+    """The report prompt lists all three markers with `refuted` last, so a report
+    that restates the legend in a code block would otherwise hard-block ТЗ."""
+    md = (
+        "# Репорт\n\n"
+        "<!-- verdict: confirmed -->\n\n"
+        "Приложение: формат маркера.\n"
+        "```\n"
+        "<!-- verdict: confirmed -->  — если проблематика подтверждена\n"
+        "<!-- verdict: partial -->    — если подтверждена частично\n"
+        "<!-- verdict: refuted -->    — если не подтверждена\n"
+        "```\n"
+    )
+    assert pipeline.parse_verdict(md) == "confirmed"
+
+
+def test_only_fenced_markers_means_no_verdict():
+    md = "```\n<!-- verdict: refuted -->\n```\n"
+    assert pipeline.parse_verdict(md) is None
+
+
+def test_real_marker_after_a_fenced_block_still_wins():
+    md = (
+        "```\n<!-- verdict: confirmed -->\n```\n\n"
+        "Вывод по существу.\n\n"
+        "<!-- verdict: refuted -->\n"
+    )
+    assert pipeline.parse_verdict(md) == "refuted"
+
+
+def test_valid_marker_followed_by_a_bogus_one():
+    """A bogus trailing value must not erase the real verdict — the regex only
+    matches the three known values, so last-wins picks the last VALID marker."""
+    md = "<!-- verdict: partial -->\n\n<!-- verdict: maybe -->\n"
+    assert pipeline.parse_verdict(md) == "partial"
