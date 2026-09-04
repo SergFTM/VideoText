@@ -40,6 +40,11 @@
     afMode: 'research',
     afExpansions: {},
     afPoll: null,
+    // Version the picker is currently displaying: null/undefined = "the
+    // latest" (follows generation/polling). Set by the picker's onchange,
+    // reset whenever the mode or video changes so no stale pin leaks across
+    // artifacts.
+    afViewingVersion: null,
     afGates: {},
     afDrafts: [],
   };
@@ -851,6 +856,7 @@
   function selectArtifactMode(mode) {
     stopArtifactPolling();
     state.afMode = mode;
+    state.afViewingVersion = null;  // switching mode/video: stop pinning an old version
     $('af-modes').querySelectorAll('[data-mode]').forEach(el =>
       el.style.fontWeight = el.dataset.mode === mode ? '700' : '400');
     const e = state.afExpansions[mode];
@@ -875,12 +881,23 @@
     catch (_) { sel.style.display = 'none'; return; }
     if (versions.length < 2) { sel.style.display = 'none'; return; }
     sel.style.display = '';
-    sel.innerHTML = versions.map((v, i) =>
-      `<option value="${v.version}"${i === 0 ? ' selected' : ''}>v${v.version} · ${escapeHtml(v.model)} · ${v.chars} симв.</option>`
+    // versions is newest-first; index 0 is "the latest". Re-select whatever
+    // the user was pinned to (state.afViewingVersion) if it still exists,
+    // so a mid-generation picker refresh doesn't yank their view back to latest.
+    const pinned = state.afViewingVersion;
+    const selectedVersion = (pinned != null && versions.some(v => v.version === pinned))
+      ? pinned : versions[0].version;
+    sel.innerHTML = versions.map(v =>
+      `<option value="${v.version}"${v.version === selectedVersion ? ' selected' : ''}>v${v.version} · ${escapeHtml(v.model)} · ${v.chars} симв.</option>`
     ).join('');
     sel.onchange = async () => {
+      const chosen = Number(sel.value);
+      // Index 0 in the freshly-fetched list is "the latest" — picking it
+      // means "follow along", so clear the pin rather than lock to a number
+      // that stops being latest the moment a new version lands.
+      state.afViewingVersion = (chosen === versions[0].version) ? null : chosen;
       const e = await fetchJSON(
-        `/videos/${state.afSelectedId}/expansions/${stage}?version=${sel.value}`);
+        `/videos/${state.afSelectedId}/expansions/${stage}?version=${chosen}`);
       $('af-text').textContent = e.content_md || '';
     };
   }
@@ -935,7 +952,12 @@
         const e = await r.json();
         state.afExpansions[mode] = e;
         if (state.afMode === mode) selectArtifactModeView(e);
-        if (e.status !== 'running') stopArtifactPolling();
+        if (e.status !== 'running') {
+          stopArtifactPolling();
+          // The finished generation is a new version row — refresh the
+          // picker so it appears without navigating away and back.
+          if (state.afMode === mode) renderVersionPicker(mode);
+        }
       } catch (_) { /* transient */ }
     }, 2000);
   }
@@ -947,7 +969,10 @@
   // Update only the view for the already-selected mode (no re-trigger of polling).
   function selectArtifactModeView(e) {
     renderArtifactStatus(e);
-    $('af-text').textContent = e.content_md || '';
+    // Don't clobber the text if the user has pinned an older version in the
+    // picker — only the version they're actually looking at may update it.
+    const viewingPinnedOldVersion = state.afViewingVersion != null && state.afViewingVersion !== e.version;
+    if (!viewingPinnedOldVersion) $('af-text').textContent = e.content_md || '';
     $('af-export').innerHTML = (e.status === 'done')
       ? `<a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.md" target="_blank">.md</a>
          &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.pdf" target="_blank">.pdf</a>`
