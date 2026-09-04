@@ -851,6 +851,36 @@ def export_expansion_pdf(video_id: str, mode: ExpandMode):
     )
 
 
+@app.get("/videos/{video_id}/skills-bundle.zip")
+def export_skills_bundle(video_id: str):
+    """Skills + MCP scaffold + README as one archive."""
+    import skills_export
+    e = get_expansion(video_id, "ai_skills")
+    if not e or not (e.contentMd or "").strip():
+        raise HTTPException(status_code=404, detail="Нет артефакта AI-скиллов")
+    skills = skills_export.parse_skills(e.contentMd)
+    if not skills:
+        raise HTTPException(
+            status_code=400,
+            detail="Не удалось разобрать ни одного скилла — артефакт не соответствует"
+                   " формату «## Скилл N.». Перегенерируй стадию AI-скиллы.",
+        )
+    spec = get_expansion(video_id, "spec")
+    algos = get_expansion(video_id, "ai_algorithms")
+    video = get_video(video_id)
+    blob = skills_export.build_bundle(
+        skills,
+        spec_md=(spec.contentMd if spec else ""),
+        algorithms_md=(algos.contentMd if algos else ""),
+        video_title=(video.title if video else video_id),
+    )
+    return Response(
+        content=blob,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="skills-{video_id}.zip"'},
+    )
+
+
 @app.get("/videos/{video_id}/expansions/{mode}")
 def read_expansion(video_id: str, mode: ExpandMode, version: int | None = None) -> dict:
     """Current artifact, or a specific version when `?version=N` is given."""

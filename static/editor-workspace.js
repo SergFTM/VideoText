@@ -864,7 +864,10 @@
     $('af-text').textContent = e ? (e.content_md || '') : '';
     $('af-export').innerHTML = (e && e.status === 'done')
       ? `<a href="/videos/${state.afSelectedId}/expansions/${mode}.md" target="_blank">.md</a>
-         &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${mode}.pdf" target="_blank">.pdf</a>`
+         &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${mode}.pdf" target="_blank">.pdf</a>
+         ${mode === 'ai_skills'
+           ? `&nbsp; <a href="/videos/${state.afSelectedId}/skills-bundle.zip" download>ZIP (скиллы + MCP)</a>`
+           : ''}`
       : '';
     if (e && e.status === 'running') startArtifactPolling();
     renderStepper();
@@ -975,7 +978,10 @@
     if (!viewingPinnedOldVersion) $('af-text').textContent = e.content_md || '';
     $('af-export').innerHTML = (e.status === 'done')
       ? `<a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.md" target="_blank">.md</a>
-         &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.pdf" target="_blank">.pdf</a>`
+         &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.pdf" target="_blank">.pdf</a>
+         ${state.afMode === 'ai_skills'
+           ? `&nbsp; <a href="/videos/${state.afSelectedId}/skills-bundle.zip" download>ZIP (скиллы + MCP)</a>`
+           : ''}`
       : '';
     renderStepper();
   }
