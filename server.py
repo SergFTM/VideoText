@@ -56,6 +56,7 @@ from store import (                     # noqa: E402
 import local_llm                        # noqa: E402
 import pipeline                         # noqa: E402
 import screenshot as screenshot_mod     # noqa: E402
+import transcript_edit                  # noqa: E402
 
 from prisma import Prisma               # noqa: E402
 
@@ -673,6 +674,13 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         if de and getattr(de, "status", "done") == "done" and de.contentMd:
             upstream[dep] = de.contentMd
 
+    # External verification exists only on the Claude branch; Ollama has no tools.
+    web_search_available = bool(
+        req.mode == "research"
+        and transcript_edit._is_claude(model)
+        and str(settings.get("research_web_search_enabled", "true")).lower() != "false"
+    )
+
     system, user = local_llm.build_expand_prompt(
         mode=req.mode, video_title=video.title or video_id,
         section_title=req.section_title, section_md=req.section_md,
@@ -680,6 +688,7 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         full_brief_md=(essence_block + curated_brief) if use_brief else essence_block,
         transcript_excerpt=transcript_excerpt,
         upstream=upstream,
+        web_search_available=web_search_available,
     )
 
     # Mark running (preserves any previous content) BEFORE launching the thread.
