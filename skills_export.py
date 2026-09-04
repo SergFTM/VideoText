@@ -19,6 +19,7 @@ import zipfile
 _SKILL_RE = re.compile(r"^##\s+Скилл\s+\d+\.\s*(.+?)\s*$", re.MULTILINE)
 _SLUG_RE = re.compile(r"^\*\*Slug:\*\*\s*`?([a-z0-9][a-z0-9-]*)`?\s*$", re.MULTILINE)
 _DESC_RE = re.compile(r"^\*\*Описание:\*\*\s*(.+?)\s*$", re.MULTILINE)
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 
 _TRANSLIT = {
     "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh",
@@ -37,10 +38,20 @@ def slugify(title: str) -> str:
 
 
 def parse_skills(md: str | None) -> list[dict]:
-    """Split the artifact into skills. Returns [] when nothing matches the shape."""
+    """Split the artifact into skills. Returns [] when nothing matches the shape.
+
+    Headings that fall inside fenced ``` code blocks are ignored — a skill's body
+    may show example output containing the literal `## Скилл N.` pattern, and that
+    must not be mistaken for a real heading or split the real skill's body in two.
+    """
     if not md:
         return []
-    heads = list(_SKILL_RE.finditer(md))
+    fences = [(m.start(), m.end()) for m in _FENCE_RE.finditer(md)]
+
+    def _fenced(pos: int) -> bool:
+        return any(s <= pos < e for s, e in fences)
+
+    heads = [m for m in _SKILL_RE.finditer(md) if not _fenced(m.start())]
     skills = []
     for i, m in enumerate(heads):
         start = m.end()
@@ -56,6 +67,32 @@ def parse_skills(md: str | None) -> list[dict]:
             "body": body,
         })
     return skills
+
+
+def _dedupe_slugs(skills: list[dict]) -> list[dict]:
+    """Make slugs unique across the bundle: `dup-slug`, `dup-slug-2`, `dup-slug-3`, ...
+
+    Two skills can land on the same slug either because the model emitted the same
+    explicit `**Slug:**` twice, or because two punctuation-only titles both fall
+    through `slugify()` to its `"skill"` default. Without this, `zipfile.writestr`
+    silently overwrites the first skill's file with the second's — a bundle quietly
+    missing a skill, which is the worst failure mode for an export feature. Runs
+    once, before anything else touches `skills`, so the directory path, the
+    frontmatter `name:`, and the `SKILLS` list embedded in the generated
+    `mcp_server/server.py` can never drift apart.
+    """
+    used: set[str] = set()
+    out = []
+    for s in skills:
+        base = s["slug"]
+        slug = base
+        n = 2
+        while slug in used:
+            slug = f"{base}-{n}"
+            n += 1
+        used.add(slug)
+        out.append(s if slug == base else {**s, "slug": slug})
+    return out
 
 
 def _skill_md(skill: dict) -> str:
@@ -160,6 +197,7 @@ def _readme(video_title: str, skills: list[dict], spec_md: str, algorithms_md: s
 def build_bundle(skills: list[dict], *, spec_md: str = "", algorithms_md: str = "",
                  video_title: str = "") -> bytes:
     """Zip with skills tree, MCP scaffold and a README carrying the upstream context."""
+    skills = _dedupe_slugs(skills)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for s in skills:

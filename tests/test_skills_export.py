@@ -77,3 +77,44 @@ def test_generated_mcp_server_is_valid_python():
         skills_export.parse_skills(SAMPLE), spec_md="", algorithms_md="", video_title="T")
     src = zipfile.ZipFile(io.BytesIO(blob)).read("mcp_server/server.py").decode()
     compile(src, "server.py", "exec")  # syntax must be valid, not just plausible
+
+
+def test_duplicate_slugs_get_unique_files():
+    skills = [
+        {"slug": "dup-slug", "title": "First", "description": "First one", "body": "first body"},
+        {"slug": "dup-slug", "title": "Second", "description": "Second one", "body": "second body"},
+    ]
+    blob = skills_export.build_bundle(skills, spec_md="", algorithms_md="", video_title="T")
+    zf = zipfile.ZipFile(io.BytesIO(blob))
+    skill_files = sorted(n for n in zf.namelist() if n.startswith("skills/") and n.endswith("SKILL.md"))
+    assert skill_files == ["skills/dup-slug-2/SKILL.md", "skills/dup-slug/SKILL.md"]
+
+    first = zf.read("skills/dup-slug/SKILL.md").decode()
+    second = zf.read("skills/dup-slug-2/SKILL.md").decode()
+    assert "first body" in first and "second body" not in first
+    assert "second body" in second and "first body" not in second
+    assert "name: dup-slug\n" in first
+    assert "name: dup-slug-2\n" in second
+
+    server_src = zf.read("mcp_server/server.py").decode()
+    assert '"slug": "dup-slug"' in server_src
+    assert '"slug": "dup-slug-2"' in server_src
+    compile(server_src, "server.py", "exec")
+
+
+def test_heading_inside_fenced_code_block_is_ignored():
+    md = (
+        "## Скилл 1. Real Skill\n\n"
+        "**Slug:** real-skill\n"
+        "**Описание:** Настоящий скилл с примером кода.\n\n"
+        "Пример вывода:\n"
+        "```\n"
+        "## Скилл 99. Fake Heading Inside Fence\n"
+        "```\n\n"
+        "Конец блока.\n"
+    )
+    skills = skills_export.parse_skills(md)
+    assert len(skills) == 1
+    assert skills[0]["slug"] == "real-skill"
+    assert "Fake Heading Inside Fence" in skills[0]["body"]
+    assert "Конец блока" in skills[0]["body"]
