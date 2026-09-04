@@ -49,7 +49,7 @@ from store import (                     # noqa: E402
     get_stage_gate, list_stage_gates, list_streams, list_transcript_edits,
     rollback_transcript_edit, search_news_items, set_settings, start_expansion,
     sweep_running_expansions, update_news_item_enrichment, update_news_item_status,
-    update_stream_fields, upsert_expansion, upsert_stage_gate,
+    update_stream_fields, upsert_stage_gate,
     upsert_transcript_draft, get_transcript_draft, delete_transcript_draft,
     replace_screenshots, list_screenshots, delete_screenshot,
 )
