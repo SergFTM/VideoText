@@ -3,6 +3,8 @@
 Regeneration must append a version instead of overwriting, so two concurrent
 clients (or two models) never clobber each other's artifact.
 """
+import asyncio
+
 import store
 
 
@@ -88,3 +90,16 @@ async def test_fail_marks_latest_version_only(db):
     assert versions[0].status == "error"
     assert versions[1].status == "done"
     assert versions[1].contentMd == "хороший", "предыдущая версия должна пережить ошибку"
+
+
+async def test_concurrent_starts_produce_two_versions_not_a_crash(db):
+    """Two clients (or two browser tabs) hitting 'regenerate' for the same
+    (video_id, mode) at the same instant must both get a version, not have
+    one of them blow up on the (videoId, mode, version) unique constraint."""
+    await _seed_video(db)
+    first, second = await asyncio.gather(
+        _start("vidV", "research"),
+        _start("vidV", "research", model="claude-opus-5"),
+    )
+    versions = sorted([first.version, second.version])
+    assert versions == [1, 2], "конкурентный старт должен создать две версии, а не упасть"

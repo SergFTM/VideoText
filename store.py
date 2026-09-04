@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from prisma import Prisma
+from prisma.errors import UniqueViolationError
 
 # Per-1M-token pricing (USD). Keep in sync with CLAUDE.md + pricing pages.
 _PRICING: dict[str, tuple[float, float]] = {
@@ -606,24 +607,35 @@ async def _list_expansions(video_id: str):
 async def _start_expansion(
     *, video_id: str, mode: str, source_title: str, source_md: str,
     context_mode: str, model: str, num_ctx: int, input_chars: int,
+    _max_attempts: int = 5,
 ):
     """Append a new running version. Never overwrites: two clients generating
-    the same mode concurrently produce two versions instead of racing for one row."""
+    the same mode concurrently produce two versions instead of racing for one
+    row. The read-then-write (max version -> create version+1) is not
+    atomic, so a concurrent caller can create the same next version first;
+    that loses the race with a UniqueViolationError on (videoId, mode,
+    version), which we retry against a fresh read rather than let propagate."""
     db = Prisma()
     await db.connect()
     try:
-        last = await db.expansion.find_first(
-            where={"videoId": video_id, "mode": mode}, order={"version": "desc"},
-        )
-        version = (last.version + 1) if last else 1
-        return await db.expansion.create(data={
-            "videoId": video_id, "mode": mode, "version": version,
-            "fromVersion": last.version if last else None,
-            "sourceTitle": source_title, "sourceMd": source_md,
-            "contextMode": context_mode, "model": model, "numCtx": num_ctx,
-            "contentMd": "", "inputChars": input_chars, "elapsedMs": 0,
-            "status": "running", "error": None,
-        })
+        for attempt in range(_max_attempts):
+            last = await db.expansion.find_first(
+                where={"videoId": video_id, "mode": mode}, order={"version": "desc"},
+            )
+            version = (last.version + 1) if last else 1
+            try:
+                return await db.expansion.create(data={
+                    "videoId": video_id, "mode": mode, "version": version,
+                    "fromVersion": last.version if last else None,
+                    "sourceTitle": source_title, "sourceMd": source_md,
+                    "contextMode": context_mode, "model": model, "numCtx": num_ctx,
+                    "contentMd": "", "inputChars": input_chars, "elapsedMs": 0,
+                    "status": "running", "error": None,
+                })
+            except UniqueViolationError:
+                if attempt == _max_attempts - 1:
+                    raise
+                continue
     finally:
         await db.disconnect()
 
