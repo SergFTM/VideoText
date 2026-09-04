@@ -6,6 +6,7 @@ network part. Mirrors brief.py's JSON-output approach for structured assessment.
 from __future__ import annotations
 
 import json
+import re
 
 import brief  # resolve_model
 
@@ -31,6 +32,23 @@ GATE_PREDECESSOR: dict[str, str] = {
     "ai_algorithms": "spec",
     "ai_skills": "ai_algorithms",
 }
+
+# The single machine-readable contract inside an otherwise free-form artifact:
+# the report ends with a verdict marker the server can act on (see §2 of the spec).
+_VERDICT_RE = re.compile(
+    r"<!--\s*verdict:\s*(confirmed|partial|refuted)\s*-->", re.IGNORECASE)
+
+
+def parse_verdict(md: str | None) -> str | None:
+    """Last verdict marker in the text, lowercased. None if absent or unknown.
+
+    Last-wins because a model may quote the format in its prose before emitting
+    the real marker at the end.
+    """
+    if not md:
+        return None
+    matches = _VERDICT_RE.findall(md)
+    return matches[-1].lower() if matches else None
 
 # Readiness checklists (docs/task-flow-v2.md §3), keyed by the stage being assessed.
 CHECKLISTS: dict[str, list[tuple[str, str]]] = {

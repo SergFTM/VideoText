@@ -111,7 +111,8 @@ def _run_expansion_job(*, video_id, mode, system, user, model, num_ctx, temperat
         full_text = "".join(chunks).strip()
         if full_text:
             finish_expansion(video_id=video_id, mode=mode, content_md=full_text,
-                             elapsed_ms=int((time.monotonic() - started) * 1000))
+                             elapsed_ms=int((time.monotonic() - started) * 1000),
+                             verdict=pipeline.parse_verdict(full_text) if mode == "report" else None)
         else:
             fail_expansion(video_id=video_id, mode=mode, error="пустой ответ модели")
     except Exception as e:
@@ -703,6 +704,9 @@ def _expansion_to_dict(e) -> dict:
         "id": e.id,
         "video_id": e.videoId,
         "mode": e.mode,
+        "version": e.version,
+        "from_version": e.fromVersion,
+        "verdict": getattr(e, "verdict", None),
         "source_title": e.sourceTitle,
         "source_md": e.sourceMd,
         "context_mode": e.contextMode,
