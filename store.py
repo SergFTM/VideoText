@@ -490,6 +490,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "local_llm_num_ctx":            32768,             # qwen2.5 native cap; default 2048 truncates brief+transcript
     "local_llm_temperature":        0.3,               # lower = more focused/deterministic specs
     "local_llm_max_transcript_chars": 60000,           # raw transcript clip before stuffing into prompt
+    # Research-stage external verification (Anthropic server-side web search).
+    "research_web_search_enabled":  True,              # off → research degrades to "не проверено"
+    "research_web_search_max_uses": 5,                 # searches per research run; 0 disables
 }
 
 

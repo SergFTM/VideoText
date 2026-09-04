@@ -99,7 +99,7 @@ _expansion_jobs: set[tuple[str, str]] = set()
 _expansion_jobs_lock = threading.Lock()
 
 
-def _run_expansion_job(*, video_id, mode, system, user, model, num_ctx, temperature):
+def _run_expansion_job(*, video_id, mode, system, user, model, num_ctx, temperature, tools=None):
     """Runs in a daemon thread. Streams the LLM fully, then persists. Never tied
     to the HTTP request, so client disconnect/navigation cannot abort it."""
     import time
@@ -107,7 +107,7 @@ def _run_expansion_job(*, video_id, mode, system, user, model, num_ctx, temperat
     try:
         chunks = list(local_llm.stream_chat(
             system=system, user=user, model=model,
-            num_ctx=num_ctx, temperature=temperature,
+            num_ctx=num_ctx, temperature=temperature, tools=tools,
         ))
         full_text = "".join(chunks).strip()
         if full_text:
@@ -706,6 +706,9 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         web_search_available=web_search_available,
     )
 
+    search_max_uses = int(settings.get("research_web_search_max_uses") or 5)
+    tools = local_llm.web_search_tools(search_max_uses) if web_search_available else None
+
     # Mark running (preserves any previous content) BEFORE launching the thread.
     start_expansion(
         video_id=video_id, mode=req.mode, source_title=req.section_title,
@@ -716,7 +719,7 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         target=_run_expansion_job, daemon=True,
         kwargs={"video_id": video_id, "mode": req.mode, "system": system,
                 "user": user, "model": model, "num_ctx": num_ctx,
-                "temperature": temperature},
+                "temperature": temperature, "tools": tools},
     ).start()
     return {"status": "running", "mode": req.mode, "context_mode": ctx_mode}
 

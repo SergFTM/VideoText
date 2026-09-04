@@ -23,6 +23,17 @@ DEFAULT_MODEL = "qwen2.5:7b"
 DEFAULT_NUM_CTX = 32768  # qwen2.5 native cap; Ollama silently truncates to 2048 without this.
 MAX_TRANSCRIPT_CHARS = 60000  # ≈ 20-22K tokens on Russian — leaves headroom for brief + answer.
 
+# Anthropic server-side web search. Only the research stage gets it: the other
+# five stages reason over upstream artifacts and have nothing to look up.
+WEB_SEARCH_TOOL_TYPE = "web_search_20250305"
+
+
+def web_search_tools(max_uses: int) -> list[dict] | None:
+    """Tool block for the research stage, or None when search is disabled."""
+    if max_uses is None or max_uses < 1:
+        return None
+    return [{"type": WEB_SEARCH_TOOL_TYPE, "name": "web_search", "max_uses": int(max_uses)}]
+
 
 def _endpoint() -> str:
     return os.getenv("OLLAMA_URL", DEFAULT_ENDPOINT).rstrip("/")
@@ -45,19 +56,24 @@ def stream_chat(
     model: str = DEFAULT_MODEL,
     num_ctx: int = DEFAULT_NUM_CTX,
     temperature: float = 0.3,
+    tools: list[dict] | None = None,
 ) -> Iterator[str]:
     """Stream content deltas from Ollama /api/chat as plain strings.
 
     Uses urllib (stdlib) on purpose — no aiohttp/httpx dependency, no event loop
     entanglement. Caller decides how to ship deltas downstream (SSE, websocket,
     join-and-return, etc).
+
+    `tools` (Anthropic server-side tools, e.g. web search) is forwarded only on
+    the Claude branch. Ollama has no server-side tools — it is deliberately
+    ignored below rather than leaked into the request payload.
     """
     # Claude fallback: a model id like "claude-sonnet-4-6" routes to Anthropic
     # via the dispatcher already in transcript_edit.py. Lazy import avoids the
     # circular dependency (transcript_edit imports local_llm).
     import transcript_edit
     if transcript_edit._is_claude(model):
-        yield from transcript_edit._stream_claude(system, user, model)
+        yield from transcript_edit._stream_claude(system, user, model, tools=tools)
         return
     payload = json.dumps({
         "model": model,
