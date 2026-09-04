@@ -29,6 +29,14 @@ def test_research_forbids_self_confirmation():
     assert "сам себя" in s or "самого себя" in s
 
 
+def test_research_demands_literal_source_urls():
+    """A research artifact whose sources can't be followed isn't verified — the
+    model must write the URL out as text, not just cite a name or a domain."""
+    s = local_llm.SYSTEM_PROMPTS["research"].lower()
+    assert "url" in s
+    assert "https://" in s
+
+
 def test_report_demands_reconciliation_and_verdict():
     s = local_llm.SYSTEM_PROMPTS["report"].lower()
     assert "сверка" in s
