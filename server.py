@@ -44,8 +44,8 @@ from main import process_url            # noqa: E402
 from store import (                     # noqa: E402
     create_news_image, create_stream, create_transcript_edit, fail_expansion,
     find_similar_image, finish_expansion, get_all_settings, get_expansion,
-    get_news_item, get_stream, get_transcript_edit, get_video, increment_image_reuse,
-    list_expansions, list_news_images, list_news_items, list_stream_briefs,
+    get_expansion_version, get_news_item, get_stream, get_transcript_edit, get_video, increment_image_reuse,
+    list_expansions, list_expansion_versions, list_news_images, list_news_items, list_stream_briefs,
     get_stage_gate, list_stage_gates, list_streams, list_transcript_edits,
     rollback_transcript_edit, search_news_items, set_settings, start_expansion,
     sweep_running_expansions, update_news_item_enrichment, update_news_item_status,
@@ -775,6 +775,27 @@ def assess_stage(video_id: str, stage: str) -> dict:
     return _stage_gate_to_dict(row)
 
 
+@app.get("/videos/{video_id}/expansions/{mode}/versions")
+def read_expansion_versions(video_id: str, mode: ExpandMode) -> dict:
+    """Version list for the artifact selector. Bodies are omitted on purpose —
+    the UI fetches one version's text only when the user picks it."""
+    rows = list_expansion_versions(video_id, mode)
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
+    return {
+        "mode": mode,
+        "versions": [{
+            "version": r.version,
+            "model": r.model,
+            "status": getattr(r, "status", "done"),
+            "verdict": getattr(r, "verdict", None),
+            "chars": len(r.contentMd or ""),
+            "elapsed_ms": r.elapsedMs,
+            "created_at": r.createdAt.isoformat(),
+        } for r in rows],
+    }
+
+
 # NOTE: the `.pdf` route MUST be declared before the bare `{mode}` route.
 # A path param matches dots, so `{mode}` would otherwise capture "spec.pdf"
 # and shadow this route (Starlette matches in declaration order).
@@ -802,10 +823,14 @@ def export_expansion_pdf(video_id: str, mode: ExpandMode):
 
 
 @app.get("/videos/{video_id}/expansions/{mode}")
-def read_expansion(video_id: str, mode: ExpandMode) -> dict:
-    e = get_expansion(video_id, mode)
+def read_expansion(video_id: str, mode: ExpandMode, version: int | None = None) -> dict:
+    """Current artifact, or a specific version when `?version=N` is given."""
+    e = (get_expansion_version(video_id, mode, version) if version is not None
+         else get_expansion(video_id, mode))
     if not e:
-        raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
+        detail = (f"No '{mode}' v{version} for {video_id}" if version is not None
+                  else f"No '{mode}' expansion for {video_id}")
+        raise HTTPException(status_code=404, detail=detail)
     return _expansion_to_dict(e)
 
 
