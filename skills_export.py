@@ -19,7 +19,7 @@ import re
 import zipfile
 
 _SKILL_RE = re.compile(r"^##\s+Скилл\s+\d+\.\s*(.+?)\s*$", re.MULTILINE)
-_ALGO_RE = re.compile(r"^##\s+Алгоритм\s+\d+\.\s*(.+?)\s*$", re.MULTILINE)
+_ALGO_RE = re.compile(r"^#{1,3}\s+Алгоритм\s+\d+[.:)]\s*(.+?)\s*$", re.MULTILINE)
 _SLUG_RE = re.compile(r"^\*\*Slug:\*\*\s*`?([a-z0-9][a-z0-9-]*)`?\s*$", re.MULTILINE)
 _DESC_RE = re.compile(r"^\*\*Описание:\*\*\s*(.+?)\s*$", re.MULTILINE)
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)

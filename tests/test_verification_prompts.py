@@ -82,3 +82,8 @@ def test_skills_prompt_pins_machine_parsable_shape():
     assert "## Скилл N." in s
     assert "**Slug:**" in s
     assert "Инструменты MCP" in s
+
+
+def test_algorithms_prompt_pins_machine_parsable_heading():
+    s = local_llm.SYSTEM_PROMPTS["ai_algorithms"]
+    assert "## Алгоритм N." in s

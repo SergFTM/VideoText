@@ -204,6 +204,36 @@ def test_algorithm_body_with_quotes_and_backslashes_still_compiles():
     compile(_server_src(md), "server.py", "exec")
 
 
+def test_algorithm_heading_colon_form_parses():
+    md = ("## Алгоритм 1: Rebalance Basket\n\n"
+          "**Шаги:**\n1. Загрузить последний скоринг.\n2. Отсечь хвост по порогу.\n")
+    algos = skills_export.parse_algorithms(md)
+    assert len(algos) == 1
+    assert algos[0]["title"] == "Rebalance Basket"
+    assert algos[0]["slug"] == "rebalance-basket"
+    assert "Отсечь хвост по порогу." in algos[0]["body"]
+
+
+def test_algorithm_heading_h1_form_parses():
+    md = ("# Алгоритм 1. Rebalance Basket\n\n"
+          "**Шаги:**\n1. Загрузить последний скоринг.\n")
+    algos = skills_export.parse_algorithms(md)
+    assert len(algos) == 1
+    assert algos[0]["title"] == "Rebalance Basket"
+    assert algos[0]["slug"] == "rebalance-basket"
+    assert "Загрузить последний скоринг." in algos[0]["body"]
+
+
+def test_algorithm_heading_h3_closing_paren_form_parses():
+    md = ("### Алгоритм 1) Rebalance Basket\n\n"
+          "**Шаги:**\n1. Загрузить последний скоринг.\n")
+    algos = skills_export.parse_algorithms(md)
+    assert len(algos) == 1
+    assert algos[0]["title"] == "Rebalance Basket"
+    assert algos[0]["slug"] == "rebalance-basket"
+    assert "Загрузить последний скоринг." in algos[0]["body"]
+
+
 def test_bundle_without_algorithms_is_still_valid():
     for algorithms_md in ("", "Просто текст без заголовков алгоритмов"):
         src = _server_src(algorithms_md)
