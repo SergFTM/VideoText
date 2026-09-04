@@ -51,31 +51,49 @@ def parse_verdict(md: str | None) -> str | None:
     return matches[-1].lower() if matches else None
 
 # Readiness checklists (docs/task-flow-v2.md §3), keyed by the stage being assessed.
-CHECKLISTS: dict[str, list[tuple[str, str]]] = {
+# Each item is (key, label, kind). kind="human" means the criterion cannot be read
+# off the artifact's text — only a person can close it, and an AI assessment must
+# never reset it.
+CHECKLISTS: dict[str, list[tuple[str, str, str]]] = {
     "research": [
-        ("domain", "Описана предметная область задачи"),
-        ("options", "Перечислены варианты решения (минимум 2)"),
-        ("limits", "Указаны ограничения и риски"),
-        ("open_q", "Сформулированы открытые вопросы"),
-        ("sources", "Указаны источники или наблюдения"),
+        ("domain", "Описана предметная область задачи", "ai"),
+        ("options", "Перечислены варианты решения (минимум 2)", "ai"),
+        ("limits", "Указаны ограничения и риски", "ai"),
+        ("open_q", "Сформулированы открытые вопросы", "ai"),
+        ("sources", "Указаны источники или наблюдения", "ai"),
+        ("verified", "Утверждения проверены против внешних источников", "ai"),
     ],
     "report": [
-        ("verdict", "Сформулирован чёткий вывод (что рекомендуется)"),
-        ("justified", "Обоснован выбор варианта"),
-        ("next", "Указаны следующие действия"),
-        ("accepted", "Решение согласовано / принято к разработке"),
+        ("verdict", "Сформулирован чёткий вывод (что рекомендуется)", "ai"),
+        ("reconciled", "Проведена сверка брифа, расшифровки и ресерча", "ai"),
+        ("justified", "Обоснован выбор варианта", "ai"),
+        ("next", "Указаны следующие действия", "ai"),
+        ("accepted", "Решение согласовано / принято к разработке", "human"),
     ],
     "spec": [
-        ("goal_user", "Определены цель и пользователь"),
-        ("func", "Перечислены все функциональные требования"),
-        ("scenarios", "Указаны сценарии использования"),
-        ("acceptance", "Определены критерии приёмки"),
+        ("goal_user", "Определены цель и пользователь", "ai"),
+        ("func", "Перечислены все функциональные требования", "ai"),
+        ("scenarios", "Указаны сценарии использования", "ai"),
+        ("acceptance", "Определены критерии приёмки", "ai"),
+    ],
+    "uiux": [
+        ("screens", "Описаны все экраны сценария", "ai"),
+        ("states", "У каждого экрана заданы состояния (загрузка/успех/ошибка/пусто)", "ai"),
+        ("transitions", "Указаны переходы при успехе и при ошибке", "ai"),
+        ("matches_spec", "Сценарий не противоречит ТЗ", "ai"),
     ],
     "ai_algorithms": [
-        ("single", "Алгоритм описывает одно конкретное действие (не смешанное)"),
-        ("repeat", "Действие будет повторяться 3+ раза"),
-        ("inputs", "Входные данные чётко определены"),
-        ("output", "Формат результата зафиксирован"),
+        ("single", "Каждый алгоритм описывает одно действие (не смешанное)", "ai"),
+        ("repeat", "Действие будет повторяться 3+ раза", "ai"),
+        ("inputs", "Входные данные чётко определены", "ai"),
+        ("output", "Формат результата зафиксирован", "ai"),
+        ("core", "Описаны вычислительное ядро и модульная декомпозиция", "ai"),
+    ],
+    "ai_skills": [
+        ("threshold", "Каждый скилл проходит критерий 3+ повторов", "ai"),
+        ("io", "У каждого скилла заданы вход и формат результата", "ai"),
+        ("slug", "У каждого скилла есть slug в kebab-case", "ai"),
+        ("mcp", "Для каждого скилла указаны MCP-тулы или явное «не требуется»", "ai"),
     ],
 }
 
@@ -84,8 +102,12 @@ CHECKLISTS: dict[str, list[tuple[str, str]]] = {
 
 
 def build_assess_prompt(stage: str, artifact_md: str) -> tuple[str, str]:
-    """(system, user) for assessing one stage's artifact against its checklist."""
-    items = CHECKLISTS.get(stage, [])
+    """(system, user) for assessing one stage's artifact against its checklist.
+
+    Only "ai" items reach the model: a human-decision criterion has no evidence
+    in the text, so asking the model about it produces a guaranteed false negative.
+    """
+    items = [(k, label) for k, label, kind in CHECKLISTS.get(stage, []) if kind == "ai"]
     criteria = "\n".join(f"- {key}: {label}" for key, label in items)
     system = (
         "Ты оцениваешь полноту артефакта по чеклисту готовности. Для КАЖДОГО пункта"
@@ -100,22 +122,35 @@ def build_assess_prompt(stage: str, artifact_md: str) -> tuple[str, str]:
     return system, user
 
 
-def parse_assessment(stage: str, raw: dict) -> list[dict]:
+def parse_assessment(stage: str, raw: dict, previous: list[dict] | None = None) -> list[dict]:
     """Map a raw {key:{checked,note}} dict to the full ordered checklist item list.
-    Missing keys default to unchecked; labels are carried from CHECKLISTS."""
+
+    AI items take their value from the model. Human items keep whatever the user
+    had already ticked (`previous`), because the model was never asked about them —
+    resetting them here would silently undo the user's decision on every re-assess.
+    """
+    prior = {i.get("key"): i for i in (previous or [])}
     out = []
-    for key, label in CHECKLISTS.get(stage, []):
+    for key, label, kind in CHECKLISTS.get(stage, []):
+        if kind == "human":
+            was = prior.get(key) or {}
+            out.append({
+                "key": key, "label": label, "kind": kind,
+                "checked": bool(was.get("checked", False)),
+                "ai_note": "решение человека",
+            })
+            continue
         entry = raw.get(key) or {}
         out.append({
-            "key": key,
-            "label": label,
+            "key": key, "label": label, "kind": kind,
             "checked": bool(entry.get("checked", False)),
             "ai_note": str(entry.get("note", "")),
         })
     return out
 
 
-def assess_checklist(stage: str, artifact_md: str, model: str | None = None) -> list[dict]:
+def assess_checklist(stage: str, artifact_md: str, model: str | None = None,
+                     previous: list[dict] | None = None) -> list[dict]:
     """Run Claude to assess the artifact; returns parsed checklist items."""
     import anthropic
     system, user = build_assess_prompt(stage, artifact_md)
@@ -133,4 +168,4 @@ def assess_checklist(stage: str, artifact_md: str, model: str | None = None) -> 
         # Best-effort: strip code fences if the model wrapped JSON.
         cleaned = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         raw = json.loads(cleaned) if cleaned.startswith("{") else {}
-    return parse_assessment(stage, raw)
+    return parse_assessment(stage, raw, previous=previous)

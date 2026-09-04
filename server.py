@@ -776,8 +776,10 @@ def assess_stage(video_id: str, stage: str) -> dict:
     e = get_expansion(video_id, stage)
     if not e or not (e.contentMd or "").strip():
         raise HTTPException(status_code=400, detail="Нет артефакта этапа для оценки")
+    prev = get_stage_gate(video_id, stage)
+    previous_items = json.loads(prev.items) if prev else None
     try:
-        items = pipeline.assess_checklist(stage, e.contentMd)
+        items = pipeline.assess_checklist(stage, e.contentMd, previous=previous_items)
     except Exception as ex:
         raise HTTPException(status_code=502, detail=f"AI-оценка не удалась: {ex}")
     row = upsert_stage_gate(video_id=video_id, stage=stage, items=items, assessed=True)
