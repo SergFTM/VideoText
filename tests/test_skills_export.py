@@ -118,3 +118,96 @@ def test_heading_inside_fenced_code_block_is_ignored():
     assert skills[0]["slug"] == "real-skill"
     assert "Fake Heading Inside Fence" in skills[0]["body"]
     assert "Конец блока" in skills[0]["body"]
+
+
+# ─── algorithms → one MCP tool stub each (spec §8) ─────────────────
+
+ALGOS = """## Алгоритм 1. Rebalance Basket
+
+**Тип:** системный
+**Цель:** Пересобрать корзину.
+
+**Шаги:**
+1. Загрузить последний скоринг.
+2. Отсечь хвост по порогу.
+
+## Алгоритм 2. Проверка данных
+
+**Шаги:**
+1. Сверить длины рядов.
+"""
+
+
+def _server_src(algorithms_md, skills_md=SAMPLE):
+    blob = skills_export.build_bundle(
+        skills_export.parse_skills(skills_md), spec_md="",
+        algorithms_md=algorithms_md, video_title="T")
+    return zipfile.ZipFile(io.BytesIO(blob)).read("mcp_server/server.py").decode()
+
+
+def test_parses_every_algorithm():
+    algos = skills_export.parse_algorithms(ALGOS)
+    assert [a["title"] for a in algos] == ["Rebalance Basket", "Проверка данных"]
+    assert [a["slug"] for a in algos] == ["rebalance-basket", "proverka-dannyh"]
+    assert "Отсечь хвост" in algos[0]["body"]
+    assert "Проверка данных" not in algos[0]["body"]
+
+
+def test_algorithm_heading_inside_a_fence_is_ignored():
+    md = ("## Алгоритм 1. Real\n\nШаг.\n```\n## Алгоритм 99. Fake\n```\nКонец.\n")
+    algos = skills_export.parse_algorithms(md)
+    assert len(algos) == 1
+    assert "Fake" in algos[0]["body"]
+
+
+def test_one_tool_stub_per_algorithm_with_its_steps():
+    src = _server_src(ALGOS)
+    assert "def rebalance_basket(payload: dict) -> dict:" in src
+    assert "def proverka_dannyh(payload: dict) -> dict:" in src
+    assert "Отсечь хвост по порогу." in src
+    assert "Сверить длины рядов." in src
+    # honest stub: nothing is dressed up as implemented
+    assert src.count("raise NotImplementedError(") == 2
+    assert "def run_algorithm(" not in src
+    assert "def list_skills()" in src
+    compile(src, "server.py", "exec")
+
+
+def test_generated_tools_are_real_module_level_functions():
+    """Not just text: the tool names must exist as top-level defs in the AST."""
+    import ast
+    tree = ast.parse(_server_src(ALGOS))
+    names = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
+    assert "rebalance_basket" in names and "proverka_dannyh" in names
+
+
+def test_duplicate_and_non_ascii_algorithm_names_stay_valid_and_unique():
+    md = ("## Алгоритм 1. Сбор\n\nA.\n\n"
+          "## Алгоритм 2. Сбор\n\nB.\n\n"
+          "## Алгоритм 3. 日本語 ‼\n\nC.\n\n"
+          "## Алгоритм 4. list_skills\n\nD.\n\n"
+          "## Алгоритм 5. class\n\nE.\n\n"
+          "## Алгоритм 6. 7 шагов\n\nF.\n")
+    src = _server_src(md)
+    compile(src, "server.py", "exec")
+    import ast
+    names = [n.name for n in ast.parse(src).body if isinstance(n, ast.FunctionDef)]
+    tools = [n for n in names if n not in ("_skill_text", "_make", "_prompt")]
+    assert len(tools) == len(set(tools)), f"имена тулов столкнулись: {tools}"
+    assert names.count("list_skills") == 1, "алгоритм не должен затирать list_skills"
+    assert all(n.isidentifier() for n in names)
+
+
+def test_algorithm_body_with_quotes_and_backslashes_still_compiles():
+    md = ('## Алгоритм 1. Экранирование\n\n'
+          'Внутри: """ и путь C:' + '\\' + 'dir' + '\\' + 'file и хвостовая кавычка "\n')
+    compile(_server_src(md), "server.py", "exec")
+
+
+def test_bundle_without_algorithms_is_still_valid():
+    for algorithms_md in ("", "Просто текст без заголовков алгоритмов"):
+        src = _server_src(algorithms_md)
+        compile(src, "server.py", "exec")
+        assert "def list_skills()" in src
+        assert "NotImplementedError" not in src
+        assert "Алгоритмы не найдены" in src

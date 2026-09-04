@@ -1,22 +1,25 @@
-"""Turn the ai_skills artifact into a runnable bundle.
+"""Turn the ai_skills (and ai_algorithms) artifacts into a runnable bundle.
 
 The ai_skills prompt (local_llm.SYSTEM_PROMPTS) pins a strict shape — `## Скилл N.`
 headings with a `**Slug:**` line — precisely so this parser can be simple and the
-failure mode obvious: no headings, no bundle, explicit error.
+failure mode obvious: no headings, no bundle, explicit error. The algorithms
+artifact is split the same way on `## Алгоритм N.` headings, by the same splitter.
 
 What ships is honest about what it is: the MCP prompts are complete (they carry the
-skill text), the MCP tools are stubs with the algorithm's steps in the docstring.
-Generating a working implementation from prose is not something we can do, so we
-don't pretend to.
+skill text), the MCP tools are one stub per algorithm with that algorithm's steps in
+the docstring and a body that raises. Generating a working implementation from prose
+is not something we can do, so we don't pretend to.
 """
 from __future__ import annotations
 
 import io
 import json
+import keyword
 import re
 import zipfile
 
 _SKILL_RE = re.compile(r"^##\s+Скилл\s+\d+\.\s*(.+?)\s*$", re.MULTILINE)
+_ALGO_RE = re.compile(r"^##\s+Алгоритм\s+\d+\.\s*(.+?)\s*$", re.MULTILINE)
 _SLUG_RE = re.compile(r"^\*\*Slug:\*\*\s*`?([a-z0-9][a-z0-9-]*)`?\s*$", re.MULTILINE)
 _DESC_RE = re.compile(r"^\*\*Описание:\*\*\s*(.+?)\s*$", re.MULTILINE)
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
@@ -30,19 +33,20 @@ _TRANSLIT = {
 }
 
 
-def slugify(title: str) -> str:
-    """kebab-case ASCII slug. Used only when the model omitted the Slug line."""
+def slugify(title: str, default: str = "skill") -> str:
+    """kebab-case ASCII slug. Used when the model omitted the Slug line."""
     out = "".join(_TRANSLIT.get(ch, ch) for ch in (title or "").lower())
     out = re.sub(r"[^a-z0-9]+", "-", out).strip("-")
-    return out or "skill"
+    return out or default
 
 
-def parse_skills(md: str | None) -> list[dict]:
-    """Split the artifact into skills. Returns [] when nothing matches the shape.
+def _split_sections(md: str | None, heading_re: re.Pattern) -> list[tuple[str, str]]:
+    """[(title, body)] for every heading matching `heading_re`, outside code fences.
 
-    Headings that fall inside fenced ``` code blocks are ignored — a skill's body
-    may show example output containing the literal `## Скилл N.` pattern, and that
-    must not be mistaken for a real heading or split the real skill's body in two.
+    The one splitter for both artifacts: skills (`## Скилл N.`) and algorithms
+    (`## Алгоритм N.`) have the same pinned shape and the same hazard — a section's
+    body may show example output containing the literal heading pattern, and that
+    must not be mistaken for a real heading or split the real body in two.
     """
     if not md:
         return []
@@ -51,13 +55,18 @@ def parse_skills(md: str | None) -> list[dict]:
     def _fenced(pos: int) -> bool:
         return any(s <= pos < e for s, e in fences)
 
-    heads = [m for m in _SKILL_RE.finditer(md) if not _fenced(m.start())]
-    skills = []
+    heads = [m for m in heading_re.finditer(md) if not _fenced(m.start())]
+    out = []
     for i, m in enumerate(heads):
-        start = m.end()
         end = heads[i + 1].start() if i + 1 < len(heads) else len(md)
-        body = md[start:end].strip()
-        title = m.group(1).strip()
+        out.append((m.group(1).strip(), md[m.end():end].strip()))
+    return out
+
+
+def parse_skills(md: str | None) -> list[dict]:
+    """Split the artifact into skills. Returns [] when nothing matches the shape."""
+    skills = []
+    for title, body in _split_sections(md, _SKILL_RE):
         slug_m = _SLUG_RE.search(body)
         desc_m = _DESC_RE.search(body)
         skills.append({
@@ -67,6 +76,16 @@ def parse_skills(md: str | None) -> list[dict]:
             "body": body,
         })
     return skills
+
+
+def parse_algorithms(md: str | None) -> list[dict]:
+    """Split the algorithms artifact into algorithms. [] when nothing matches.
+
+    The algorithms prompt has no `**Slug:**` line, so the slug is always derived
+    from the title — which is exactly what the generated tool name is built on.
+    """
+    return [{"slug": slugify(title, default="algorithm"), "title": title, "body": body}
+            for title, body in _split_sections(md, _ALGO_RE)]
 
 
 def _dedupe_slugs(skills: list[dict]) -> list[dict]:
@@ -108,20 +127,100 @@ def _skill_md(skill: dict) -> str:
     )
 
 
-def _mcp_server_py(skills: list[dict]) -> str:
-    """stdio MCP server: prompts are complete, tools are honest stubs."""
+# Names the generated module already binds at module level. A tool named after an
+# algorithm must never shadow one of these — that would rebind `mcp` or clobber
+# `list_skills`, a breakage no syntax check would catch.
+_RESERVED_NAMES = {
+    "mcp", "pathlib", "FastMCP", "SKILLS", "_HERE", "_skill_text",
+    "_make", "_prompt", "_s", "list_skills",
+}
+
+
+def _py_name(slug: str) -> str:
+    """Python identifier from a slug. ASCII by construction — `slugify` already
+    transliterated Cyrillic and dropped everything outside [a-z0-9-]."""
+    name = re.sub(r"[^a-z0-9_]+", "_", (slug or "").lower().replace("-", "_")).strip("_")
+    if not name:
+        return "algorithm"
+    if name[0].isdigit():
+        name = f"algo_{name}"
+    if keyword.iskeyword(name) or keyword.issoftkeyword(name):
+        name = f"{name}_"
+    return name
+
+
+def _tool_names(algorithms: list[dict]) -> list[str]:
+    """One valid, unique Python function name per algorithm.
+
+    Two algorithms collide the same way two skills do — identical titles, or titles
+    differing only in punctuation/non-ASCII that `slugify` strips. A collision here
+    would silently redefine the first tool, so later duplicates get a `_2` suffix.
+    """
+    used = set(_RESERVED_NAMES)
+    names = []
+    for a in algorithms:
+        base = _py_name(a.get("slug") or "")
+        name, n = base, 2
+        while name in used:
+            name, n = f"{base}_{n}", n + 1
+        used.add(name)
+        names.append(name)
+    return names
+
+
+def _docstring(text: str, indent: str = "    ") -> str:
+    """Render arbitrary artifact prose as a safe triple-quoted docstring block."""
+    safe = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    safe = safe.replace("\\", "\\\\").replace('"""', '\\"' * 3).strip()
+    if safe.endswith('"'):
+        safe += " "
+    body = "\n".join((indent + ln).rstrip() for ln in safe.split("\n"))
+    return f'{indent}"""\n{body}\n{indent}"""\n'
+
+
+def _algo_tools_src(algorithms: list[dict]) -> str:
+    """One stub tool per algorithm: real name, real steps, a body that refuses.
+
+    Deliberately NOT a generic `run_algorithm(name, payload)` dispatcher: §8 of the
+    design asks for one tool per algorithm so whoever opens the server sees the real
+    inventory. Every body raises — nothing here is dressed up as implemented.
+    """
+    if not algorithms:
+        return (
+            "# Алгоритмы не найдены в артефакте ai_algorithms — тулов-заглушек нет.\n"
+            "# Сгенерируй стадию «Алгоритмы» и пересобери бандл.\n"
+        )
+    out = []
+    for name, a in zip(_tool_names(algorithms), algorithms):
+        doc = _docstring(
+            f"{a['title']}\n\n"
+            "ЗАГЛУШКА: тело не реализовано. Ниже — шаги алгоритма из артефакта.\n\n"
+            f"{a['body']}"
+        )
+        msg = json.dumps(
+            f"Алгоритм «{a['title']}» не реализован — это заглушка из бандла"
+            " VideoText. Шаги алгоритма — в докстринге.", ensure_ascii=False)
+        out.append(f"@mcp.tool()\ndef {name}(payload: dict) -> dict:\n{doc}"
+                   f"    raise NotImplementedError({msg})\n")
+    return "\n\n".join(out)
+
+
+def _mcp_server_py(skills: list[dict], algorithms: list[dict] | None = None) -> str:
+    """stdio MCP server: prompts are complete, one honest tool stub per algorithm."""
     entries = json.dumps(
         [{"slug": s["slug"], "title": s["title"], "description": s["description"]}
          for s in skills],
         ensure_ascii=False, indent=4,
     )
+    algo_tools = _algo_tools_src(algorithms or [])
     return f'''"""Generated MCP server — skills as prompts, algorithms as tool stubs.
 
 Run:  python server.py     (stdio transport)
 
 The prompts below are complete: each one serves the full SKILL.md text.
-The tools are stubs on purpose — the algorithms artifact describes WHAT to do,
-not the code. Fill in each TODO, or hand this file to an agent to implement.
+The tools are stubs on purpose — one per algorithm from the source artifact, each
+carrying that algorithm's steps in its docstring. The artifact describes WHAT to do,
+not the code. Fill in each body, or hand this file to an agent to implement.
 """
 import pathlib
 
@@ -154,15 +253,7 @@ def list_skills() -> list[dict]:
     return SKILLS
 
 
-@mcp.tool()
-def run_algorithm(name: str, payload: dict) -> dict:
-    """Execute one of the algorithms from the source artifact.
-
-    TODO: implement. See README.md for the algorithm definitions — each one lists
-    its inputs, steps, exit criteria and edge cases. Dispatch on `name`.
-    """
-    raise NotImplementedError("Алгоритмы ещё не реализованы — см. README.md")
-
+{algo_tools}
 
 if __name__ == "__main__":
     mcp.run()
@@ -176,7 +267,8 @@ def _readme(video_title: str, skills: list[dict], spec_md: str, algorithms_md: s
         "Собрано автоматически из артефактов VideoText (стадии ТЗ, алгоритмы, AI-скиллы).\n\n"
         "## Состав\n\n"
         "- `skills/<slug>/SKILL.md` — готовые скиллы с frontmatter.\n"
-        "- `mcp_server/` — MCP-сервер: промпты рабочие, тулы — заглушки с TODO.\n\n"
+        "- `mcp_server/` — MCP-сервер: промпты рабочие, на каждый алгоритм —\n"
+        "  тул-заглушка с его шагами в докстринге.\n\n"
         "## Скиллы\n\n"
         f"{listing}\n\n"
         "## Установка\n\n"
@@ -202,7 +294,8 @@ def build_bundle(skills: list[dict], *, spec_md: str = "", algorithms_md: str = 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for s in skills:
             zf.writestr(f"skills/{s['slug']}/SKILL.md", _skill_md(s))
-        zf.writestr("mcp_server/server.py", _mcp_server_py(skills))
+        zf.writestr("mcp_server/server.py",
+                    _mcp_server_py(skills, parse_algorithms(algorithms_md)))
         zf.writestr("mcp_server/requirements.txt", "mcp>=1.2.0\n")
         zf.writestr("README.md", _readme(video_title, skills, spec_md, algorithms_md))
     return buf.getvalue()

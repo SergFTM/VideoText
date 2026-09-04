@@ -876,12 +876,19 @@
     renderVersionPicker(mode);
   }
 
+  // Monotonic token: the picker awaits a fetch, so two fast mode switches can have
+  // two calls in flight and the slower one would otherwise repaint the <select> and
+  // rebind its onchange for the stage the user already left.
+  let versionPickerSeq = 0;
+
   async function renderVersionPicker(stage) {
+    const seq = ++versionPickerSeq;
     const sel = $('af-version');
     let versions = [];
     try { versions = (await fetchJSON(
       `/videos/${state.afSelectedId}/expansions/${stage}/versions`)).versions || []; }
-    catch (_) { sel.style.display = 'none'; return; }
+    catch (_) { if (seq === versionPickerSeq) sel.style.display = 'none'; return; }
+    if (seq !== versionPickerSeq) return;  // superseded while awaiting
     if (versions.length < 2) { sel.style.display = 'none'; return; }
     sel.style.display = '';
     // versions is newest-first; index 0 is "the latest". Re-select whatever
@@ -901,6 +908,7 @@
       state.afViewingVersion = (chosen === versions[0].version) ? null : chosen;
       const e = await fetchJSON(
         `/videos/${state.afSelectedId}/expansions/${stage}?version=${chosen}`);
+      if (seq !== versionPickerSeq) return;  // mode switched while fetching
       $('af-text').textContent = e.content_md || '';
     };
   }
@@ -957,9 +965,15 @@
         if (state.afMode === mode) selectArtifactModeView(e);
         if (e.status !== 'running') {
           stopArtifactPolling();
-          // The finished generation is a new version row — refresh the
-          // picker so it appears without navigating away and back.
-          if (state.afMode === mode) renderVersionPicker(mode);
+          if (state.afMode === mode) {
+            // The finished generation is a new version row — refresh the
+            // picker so it appears without navigating away and back.
+            renderVersionPicker(mode);
+            // ...and the verdict badge, which selectArtifactModeView doesn't
+            // touch: without this a fresh report's verdict only shows up after
+            // switching modes.
+            renderWarningAndHint();
+          }
         }
       } catch (_) { /* transient */ }
     }, 2000);
