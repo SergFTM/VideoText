@@ -54,3 +54,23 @@ def test_degradation_only_touches_research():
         on, _ = _build(mode, web_search_available=True)
         off, _ = _build(mode, web_search_available=False)
         assert on == off, f"{mode} не должен зависеть от доступности поиска"
+
+
+def test_algorithms_demand_core_modules_and_ml_judgement():
+    s = local_llm.SYSTEM_PROMPTS["ai_algorithms"].lower()
+    assert "вычислительное ядро" in s
+    assert "модульная декомпозиция" in s
+    assert "ml" in s
+
+
+def test_algorithms_allow_saying_no_to_ml():
+    """Without an explicit out, models bolt ML onto problems that need an if."""
+    s = local_llm.SYSTEM_PROMPTS["ai_algorithms"].lower()
+    assert "правил достаточно" in s
+
+
+def test_skills_prompt_pins_machine_parsable_shape():
+    s = local_llm.SYSTEM_PROMPTS["ai_skills"]
+    assert "## Скилл N." in s
+    assert "**Slug:**" in s
+    assert "Инструменты MCP" in s
