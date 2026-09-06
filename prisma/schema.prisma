@@ -36,12 +36,16 @@ model Video {
 }
 
 // Local-LLM-generated expansions of brief sections: ТЗ, ресерч, репорт.
-// Unique on (videoId, mode) — re-running the same mode UPSERTs the row.
+// Versioned on (videoId, mode, version) — regenerating appends a new version
+// instead of overwriting the previous one.
 model Expansion {
   id            Int      @id @default(autoincrement())
   videoId       String
   video         Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  mode          String   // "spec" | "research" | "report"
+  mode          String   // "spec" | "research" | "report" | "uiux" | "ai_skills" | "ai_algorithms"
+  version       Int      @default(1) // 1..N within (videoId, mode); @default backfills existing rows
+  fromVersion   Int?     // lineage: which version this regeneration grew from
+  verdict       String?  // mode="report" only: "confirmed" | "partial" | "refuted"
   sourceTitle   String   // heading the user clicked ("Черновик ТЗ", "Суть", ...)
   sourceMd      String   // body of the source section at the time of expansion
   contextMode   String   // "brief" | "transcript" | "both"
@@ -55,7 +59,7 @@ model Expansion {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  @@unique([videoId, mode])
+  @@unique([videoId, mode, version])
 }
 
 model Segment {

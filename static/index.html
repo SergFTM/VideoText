@@ -76,10 +76,10 @@
   <!-- Our app must be defined BEFORE Alpine walks the DOM, otherwise
        x-data="app()" resolves to `undefined` and every expression breaks. -->
   <script src="/static/i18n.js?v=11"></script>
-  <script src="/static/assistant-panel.js?v=11"></script>
+  <script src="/static/assistant-panel.js?v=12"></script>
   <script src="/static/app.js?v=13"></script>
   <script src="/static/editor-inline.js"></script>
-  <script src="/static/editor-workspace.js?v=8"></script>
+  <script src="/static/editor-workspace.js?v=9"></script>
 </head>
 <body class="font-sans bg-bg text-ink antialiased" :lang="lang">
 <a href="#main-content" class="sr-skip" x-text="t('a11y.skip_to_content')">К содержимому</a>
@@ -1536,9 +1536,13 @@
     <section class="editor-workspace-right">
       <div class="editor-empty" id="af-empty">← Выбери видео слева</div>
       <div class="editor-item" id="af-item" style="display:none;">
-        <div class="editor-item-header"><h2 id="af-title">—</h2></div>
+        <div class="editor-item-header"><h2 id="af-title">—</h2>
+          <select id="af-version" style="display:none; font-size:11px;"></select>
+        </div>
         <div id="af-stepper" style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:10px; font-size:12px;"></div>
+        <div id="af-verdict" style="display:none; font-size:12px; font-weight:600; margin:4px 0;"></div>
         <div id="af-warning" style="display:none; padding:8px 12px; margin-bottom:8px; border-radius:6px; background:#fffbeb; color:#92400e; font-size:12px;"></div>
+        <div id="af-draft-warning" style="display:none; padding:8px 12px; margin-bottom:8px; border-radius:6px; background:#fffbeb; color:#92400e; font-size:12px;"></div>
         <div class="editor-actions-bar" id="af-modes"></div>
         <div style="display:flex; gap:10px; align-items:center; margin:8px 0; font-size:12px; flex-wrap:wrap;">
           <label style="color:var(--mute);">контекст:</label>

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import anthropic
 
+import brief
 from brief import resolve_model
 
 
@@ -141,6 +142,7 @@ def extract_news_items(
         },
     )
 
+    brief.raise_if_truncated(message, "Извлечение новостей")
     text = next((b.text for b in message.content if b.type == "text"), "")
     try:
         parsed = json.loads(text)

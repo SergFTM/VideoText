@@ -40,7 +40,13 @@
     afMode: 'research',
     afExpansions: {},
     afPoll: null,
+    // Version the picker is currently displaying: null/undefined = "the
+    // latest" (follows generation/polling). Set by the picker's onchange,
+    // reset whenever the mode or video changes so no stale pin leaks across
+    // artifacts.
+    afViewingVersion: null,
     afGates: {},
+    afDrafts: [],
   };
 
   function $(id) { return document.getElementById(id); }
@@ -784,7 +790,7 @@
   const AF_ORDER = ['research', 'report', 'spec', 'uiux', 'ai_algorithms', 'ai_skills'];
   const AF_LABEL = { research: 'Ресерч', report: 'Репорт', spec: 'ТЗ', uiux: 'UI/UX', ai_algorithms: 'Алгоритмы', ai_skills: 'AI-скиллы' };
   const AF_GATE_PRED = { report: 'research', spec: 'report', ai_algorithms: 'spec', ai_skills: 'ai_algorithms' };
-  const AF_CHECKLIST_STAGES = ['research', 'report', 'spec', 'ai_algorithms'];
+  const AF_CHECKLIST_STAGES = ['research', 'report', 'spec', 'uiux', 'ai_algorithms', 'ai_skills'];
   const AF_HINT = {
     research: 'Если ресерч показал, что идея нежизнеспособна → вернись к брифу, переформулируй.',
     report: 'Если репорт без однозначной рекомендации → доп. ресерч по открытым вопросам.',
@@ -850,6 +856,7 @@
   function selectArtifactMode(mode) {
     stopArtifactPolling();
     state.afMode = mode;
+    state.afViewingVersion = null;  // switching mode/video: stop pinning an old version
     $('af-modes').querySelectorAll('[data-mode]').forEach(el =>
       el.style.fontWeight = el.dataset.mode === mode ? '700' : '400');
     const e = state.afExpansions[mode];
@@ -857,12 +864,53 @@
     $('af-text').textContent = e ? (e.content_md || '') : '';
     $('af-export').innerHTML = (e && e.status === 'done')
       ? `<a href="/videos/${state.afSelectedId}/expansions/${mode}.md" target="_blank">.md</a>
-         &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${mode}.pdf" target="_blank">.pdf</a>`
+         &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${mode}.pdf" target="_blank">.pdf</a>
+         ${mode === 'ai_skills'
+           ? `&nbsp; <a href="/videos/${state.afSelectedId}/skills-bundle.zip" download>ZIP (скиллы + MCP)</a>`
+           : ''}`
       : '';
     if (e && e.status === 'running') startArtifactPolling();
     renderStepper();
     renderChecklist();
     renderWarningAndHint();
+    renderVersionPicker(mode);
+  }
+
+  // Monotonic token: the picker awaits a fetch, so two fast mode switches can have
+  // two calls in flight and the slower one would otherwise repaint the <select> and
+  // rebind its onchange for the stage the user already left.
+  let versionPickerSeq = 0;
+
+  async function renderVersionPicker(stage) {
+    const seq = ++versionPickerSeq;
+    const sel = $('af-version');
+    let versions = [];
+    try { versions = (await fetchJSON(
+      `/videos/${state.afSelectedId}/expansions/${stage}/versions`)).versions || []; }
+    catch (_) { if (seq === versionPickerSeq) sel.style.display = 'none'; return; }
+    if (seq !== versionPickerSeq) return;  // superseded while awaiting
+    if (versions.length < 2) { sel.style.display = 'none'; return; }
+    sel.style.display = '';
+    // versions is newest-first; index 0 is "the latest". Re-select whatever
+    // the user was pinned to (state.afViewingVersion) if it still exists,
+    // so a mid-generation picker refresh doesn't yank their view back to latest.
+    const pinned = state.afViewingVersion;
+    const selectedVersion = (pinned != null && versions.some(v => v.version === pinned))
+      ? pinned : versions[0].version;
+    sel.innerHTML = versions.map(v =>
+      `<option value="${v.version}"${v.version === selectedVersion ? ' selected' : ''}>v${v.version} · ${escapeHtml(v.model)} · ${v.chars} симв.</option>`
+    ).join('');
+    sel.onchange = async () => {
+      const chosen = Number(sel.value);
+      // Index 0 in the freshly-fetched list is "the latest" — picking it
+      // means "follow along", so clear the pin rather than lock to a number
+      // that stops being latest the moment a new version lands.
+      state.afViewingVersion = (chosen === versions[0].version) ? null : chosen;
+      const e = await fetchJSON(
+        `/videos/${state.afSelectedId}/expansions/${stage}?version=${chosen}`);
+      if (seq !== versionPickerSeq) return;  // mode switched while fetching
+      $('af-text').textContent = e.content_md || '';
+    };
   }
 
   function renderArtifactStatus(e) {
@@ -873,14 +921,33 @@
     else box.textContent = '✅ готово';
   }
 
-  async function generateArtifact() {
+  async function generateArtifact(override = false) {
     const id = state.afSelectedId, mode = state.afMode;
     if (!id) return;
-    await fetchJSON(`/videos/${id}/expand-spec`, {
+    const resp = await fetch(`/videos/${id}/expand-spec`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, model: $('af-model').value, context: $('af-context').value }),
+      body: JSON.stringify({
+        mode, model: $('af-model').value, context: $('af-context').value, override,
+      }),
     });
-    state.afExpansions[mode] = { mode, status: 'running', content_md: (state.afExpansions[mode] || {}).content_md || '' };
+    // The pipeline's one hard stop: a refuted problem statement blocks ТЗ.
+    if (resp.status === 409) {
+      const body = await resp.json().catch(() => ({}));
+      if (confirm((body.detail || 'Этап заблокирован вердиктом репорта.')
+          + '\n\nВсё равно сгенерировать ТЗ?')) {
+        return generateArtifact(true);
+      }
+      return;
+    }
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      alert('Не удалось запустить генерацию: ' + (body.detail || resp.status));
+      return;
+    }
+    state.afExpansions[mode] = {
+      mode, status: 'running',
+      content_md: (state.afExpansions[mode] || {}).content_md || '',
+    };
     renderArtifactStatus(state.afExpansions[mode]);
     startArtifactPolling();
   }
@@ -896,7 +963,18 @@
         const e = await r.json();
         state.afExpansions[mode] = e;
         if (state.afMode === mode) selectArtifactModeView(e);
-        if (e.status !== 'running') stopArtifactPolling();
+        if (e.status !== 'running') {
+          stopArtifactPolling();
+          if (state.afMode === mode) {
+            // The finished generation is a new version row — refresh the
+            // picker so it appears without navigating away and back.
+            renderVersionPicker(mode);
+            // ...and the verdict badge, which selectArtifactModeView doesn't
+            // touch: without this a fresh report's verdict only shows up after
+            // switching modes.
+            renderWarningAndHint();
+          }
+        }
       } catch (_) { /* transient */ }
     }, 2000);
   }
@@ -908,10 +986,16 @@
   // Update only the view for the already-selected mode (no re-trigger of polling).
   function selectArtifactModeView(e) {
     renderArtifactStatus(e);
-    $('af-text').textContent = e.content_md || '';
+    // Don't clobber the text if the user has pinned an older version in the
+    // picker — only the version they're actually looking at may update it.
+    const viewingPinnedOldVersion = state.afViewingVersion != null && state.afViewingVersion !== e.version;
+    if (!viewingPinnedOldVersion) $('af-text').textContent = e.content_md || '';
     $('af-export').innerHTML = (e.status === 'done')
       ? `<a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.md" target="_blank">.md</a>
-         &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.pdf" target="_blank">.pdf</a>`
+         &nbsp; <a href="/videos/${state.afSelectedId}/expansions/${state.afMode}.pdf" target="_blank">.pdf</a>
+         ${state.afMode === 'ai_skills'
+           ? `&nbsp; <a href="/videos/${state.afSelectedId}/skills-bundle.zip" download>ZIP (скиллы + MCP)</a>`
+           : ''}`
       : '';
     renderStepper();
   }
@@ -919,6 +1003,8 @@
   async function loadArtifactGates(id) {
     try { state.afGates = await fetchJSON(`/videos/${id}/stage-gates`); }
     catch (_) { state.afGates = {}; }
+    try { state.afDrafts = (await fetchJSON(`/videos/${id}/pending-drafts`)).drafts || []; }
+    catch (_) { state.afDrafts = []; }
   }
 
   function renderStepper() {
@@ -948,7 +1034,10 @@
       ${items.length ? items.map((it, i) => `
         <label style="display:flex; gap:8px; align-items:flex-start; font-size:12px; margin:3px 0;">
           <input type="checkbox" data-ci="${i}" ${it.checked ? 'checked' : ''}>
-          <span>${escapeHtml(it.label)}${it.ai_note ? ` <em style="color:var(--mute-2);">— ${escapeHtml(it.ai_note)}</em>` : ''}</span>
+          <span>${escapeHtml(it.label)}
+            ${it.kind === 'human' ? ' <em style="color:var(--mute-2);">— решает человек, AI не оценивает</em>'
+              : (it.ai_note ? ` <em style="color:var(--mute-2);">— ${escapeHtml(it.ai_note)}</em>` : '')}
+          </span>
         </label>`).join('') : '<em style="font-size:12px; color:var(--mute);">нет оценки — нажми «AI-оценка»</em>'}`;
     $('af-assess').addEventListener('click', () => assessStage(stage));
     box.querySelectorAll('[data-ci]').forEach(cb =>
@@ -957,12 +1046,35 @@
 
   function renderWarningAndHint() {
     const stage = state.afMode;
+
+    const VERDICT_RU = {
+      confirmed: ['✓ проблематика подтверждена', '#166534'],
+      partial: ['◐ проблематика подтверждена частично', '#92400e'],
+      refuted: ['✗ проблематика НЕ подтверждена — ТЗ на этом основании писать нельзя', '#b91c1c'],
+    };
+    const vb = $('af-verdict');
+    const rep = state.afExpansions && state.afExpansions.report;
+    const v = rep && rep.verdict && VERDICT_RU[rep.verdict];
+    if (v) { vb.style.display = 'block'; vb.textContent = v[0]; vb.style.color = v[1]; }
+    else { vb.style.display = 'none'; }
+
     const pred = AF_GATE_PRED[stage];
     const w = $('af-warning');
     if (pred && !gateClosed(pred)) {
       w.style.display = 'block';
       w.textContent = `⚠ «${AF_LABEL[pred]}» сгенерирован, но его чек-лист готовности ещё не пройден — сгенерировать дальше можно, но лучше сначала проверить через «AI-оценка» внизу.`;
     } else { w.style.display = 'none'; }
+
+    const dw = $('af-draft-warning');
+    const KIND_RU = { transcript: 'расшифровки', brief: 'брифа', essence: 'сути' };
+    const pending = state.afDrafts || [];
+    if (pending.length) {
+      dw.style.display = 'block';
+      dw.textContent = '⚠ Непринятые черновики: '
+        + pending.map(d => `${KIND_RU[d.kind] || d.kind} (${d.chars} симв.)`).join(', ')
+        + ' — в промпт они не попадут. Примени их во вкладке «Расшифровки» или генерируй как есть.';
+    } else { dw.style.display = 'none'; }
+
     $('af-hint').textContent = AF_HINT[stage] || '';
   }
 

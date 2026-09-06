@@ -19,10 +19,10 @@ def test_gate_predecessor_chain_excludes_optional_uiux():
     assert "uiux" not in pipeline.GATE_PREDECESSOR
 
 
-def test_checklists_present_for_gated_stages_only():
-    assert set(pipeline.CHECKLISTS) == {"research", "report", "spec", "ai_algorithms"}
-    assert len(pipeline.CHECKLISTS["research"]) == 5
-    assert all(len(item) == 2 for item in pipeline.CHECKLISTS["research"])  # (key, label)
+def test_checklists_cover_every_stage():
+    assert set(pipeline.CHECKLISTS) == set(pipeline.STAGE_ORDER)
+    assert len(pipeline.CHECKLISTS["research"]) == 6
+    assert all(len(item) == 3 for item in pipeline.CHECKLISTS["research"])  # (key, label, kind)
 
 
 def test_build_assess_prompt_includes_artifact_and_keys():
@@ -30,8 +30,9 @@ def test_build_assess_prompt_includes_artifact_and_keys():
     assert "чеклист" in system.lower()        # system is stage-agnostic
     assert "research" in user                  # stage name appears in the user message
     assert "Вот ресерч" in user
-    for key, _label in pipeline.CHECKLISTS["research"]:
-        assert key in user
+    for key, _label, kind in pipeline.CHECKLISTS["research"]:
+        if kind == "ai":
+            assert key in user
 
 
 def test_parse_assessment_maps_to_items_with_labels():
@@ -45,7 +46,7 @@ def test_parse_assessment_maps_to_items_with_labels():
     assert by_key["options"]["checked"] is False
     assert by_key["options"]["ai_note"] == "только 1"
     # every checklist item is represented, missing keys default to unchecked
-    assert {i["key"] for i in items} == {k for k, _ in pipeline.CHECKLISTS["research"]}
+    assert {i["key"] for i in items} == {k for k, _l, _kind in pipeline.CHECKLISTS["research"]}
     assert by_key["limits"]["checked"] is False
     assert by_key["domain"]["label"]  # label carried through
 

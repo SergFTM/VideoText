@@ -30,6 +30,25 @@ _MODEL_ALIASES = {
 }
 
 
+class TruncatedResponse(RuntimeError):
+    """The model ran out of output budget — the text is cut off, usually mid-word."""
+
+
+def raise_if_truncated(message, what: str) -> None:
+    """Fail loudly when a response hit `max_tokens`.
+
+    A truncated artifact is worse here than no artifact: it gets persisted,
+    cached, and then handed to every downstream stage as source material. Five
+    of forty-nine briefs in the production database were stored this way before
+    this check existed, ending mid-sentence.
+    """
+    if getattr(message, "stop_reason", None) == "max_tokens":
+        raise TruncatedResponse(
+            f"{what}: модель упёрлась в max_tokens и ответ обрезан. "
+            "Подними лимит или сократи вход — сохранять обрезанный результат нельзя."
+        )
+
+
 def resolve_model(model: str | None) -> str:
     if model:
         return _MODEL_ALIASES.get(model, model)
@@ -340,7 +359,9 @@ def generate_brief(
     client = anthropic.Anthropic()
     request: dict = {
         "model": resolved_model,
-        "max_tokens": 2000,
+        # 2000 truncated 5 of 49 real briefs mid-sentence; the "Черновик ТЗ"
+        # section is the tail, and it is exactly what the six artifact stages read.
+        "max_tokens": 8000,
         "system": [
             {
                 "type": "text",
@@ -370,6 +391,7 @@ def generate_brief(
         }
 
     message = client.messages.create(**request)
+    raise_if_truncated(message, "Бриф")
     text = next((b.text for b in message.content if b.type == "text"), "")
 
     usage = {

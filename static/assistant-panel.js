@@ -116,8 +116,12 @@ function assistantPanel() {
              || document.querySelector('[x-data^="app"]')?._x_dataStack?.[0]?.activeView,
       };
 
-      const assistantMsg = { role: 'assistant', content: '', tool_events: [], cache_hit: false, cost_usd: 0 };
-      this.messages.push(assistantMsg);
+      // Alpine stores a reactive PROXY on push; mutating the raw object we
+      // created never triggers a re-render, so the answer bubble stayed empty
+      // forever — during the stream, after 'done', and after the next message.
+      // Take the proxy back out of the array and write to that.
+      this.messages.push({ role: 'assistant', content: '', tool_events: [], cache_hit: false, cost_usd: 0 });
+      const assistantMsg = this.messages[this.messages.length - 1];
 
       try {
         const resp = await fetch('/chat/platform', {

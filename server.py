@@ -44,18 +44,20 @@ from main import process_url            # noqa: E402
 from store import (                     # noqa: E402
     create_news_image, create_stream, create_transcript_edit, fail_expansion,
     find_similar_image, finish_expansion, get_all_settings, get_expansion,
-    get_news_item, get_stream, get_transcript_edit, get_video, increment_image_reuse,
-    list_expansions, list_news_images, list_news_items, list_stream_briefs,
+    get_expansion_version, get_latest_done_expansion, get_news_item, get_stream,
+    get_transcript_edit, get_video, increment_image_reuse,
+    list_expansions, list_expansion_versions, list_news_images, list_news_items, list_stream_briefs,
     get_stage_gate, list_stage_gates, list_streams, list_transcript_edits,
     rollback_transcript_edit, search_news_items, set_settings, start_expansion,
     sweep_running_expansions, update_news_item_enrichment, update_news_item_status,
-    update_stream_fields, upsert_expansion, upsert_stage_gate,
+    update_stream_fields, upsert_stage_gate,
     upsert_transcript_draft, get_transcript_draft, delete_transcript_draft,
     replace_screenshots, list_screenshots, delete_screenshot,
 )
 import local_llm                        # noqa: E402
 import pipeline                         # noqa: E402
 import screenshot as screenshot_mod     # noqa: E402
+import transcript_edit                  # noqa: E402
 
 from prisma import Prisma               # noqa: E402
 
@@ -98,7 +100,7 @@ _expansion_jobs: set[tuple[str, str]] = set()
 _expansion_jobs_lock = threading.Lock()
 
 
-def _run_expansion_job(*, video_id, mode, system, user, model, num_ctx, temperature):
+def _run_expansion_job(*, video_id, mode, system, user, model, num_ctx, temperature, tools=None):
     """Runs in a daemon thread. Streams the LLM fully, then persists. Never tied
     to the HTTP request, so client disconnect/navigation cannot abort it."""
     import time
@@ -106,12 +108,13 @@ def _run_expansion_job(*, video_id, mode, system, user, model, num_ctx, temperat
     try:
         chunks = list(local_llm.stream_chat(
             system=system, user=user, model=model,
-            num_ctx=num_ctx, temperature=temperature,
+            num_ctx=num_ctx, temperature=temperature, tools=tools,
         ))
         full_text = "".join(chunks).strip()
         if full_text:
             finish_expansion(video_id=video_id, mode=mode, content_md=full_text,
-                             elapsed_ms=int((time.monotonic() - started) * 1000))
+                             elapsed_ms=int((time.monotonic() - started) * 1000),
+                             verdict=pipeline.parse_verdict(full_text) if mode == "report" else None)
         else:
             fail_expansion(video_id=video_id, mode=mode, error="пустой ответ модели")
     except Exception as e:
@@ -616,6 +619,8 @@ class ExpandSpecRequest(BaseModel):
     # Context source: which parts of the video go into the prompt.
     context: Literal["brief", "transcript", "both"] | None = None
     include_transcript: bool = True
+    # Escape hatch for the one hard stop in the pipeline (refuted problem statement).
+    override: bool = False
 
 
 @app.post("/videos/{video_id}/expand-spec")
@@ -628,6 +633,22 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
     if not video.briefs:
         raise HTTPException(status_code=400, detail="У видео нет брифа")
+
+    # The pipeline's only hard stop. docs/task-flow-v2.md §5: "ресерч показал, что
+    # идея нежизнеспособна → стоп; возврат к брифу, переформулировка."
+    if req.mode == "spec" and not req.override:
+        # Latest DONE, not latest: `start_expansion` appends an empty `verdict=NULL`
+        # row, so reading the plain latest would let re-running the report silently
+        # switch the stop off (permanently, if that run then errored).
+        rep = get_latest_done_expansion(video_id, "report")
+        if rep is not None and getattr(rep, "verdict", None) == "refuted":
+            raise HTTPException(
+                status_code=409,
+                detail="Репорт вынес вердикт «проблематика не подтверждена» — ТЗ на"
+                       " этом основании писать нельзя. Вернись к брифу и переформулируй"
+                       " задачу, либо перегенерируй репорт. Если решение осознанное —"
+                       " повтори запрос с override.",
+            )
 
     key = (video_id, req.mode)
     existing = get_expansion(video_id, req.mode)
@@ -668,9 +689,19 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
     # Передача: feed predecessor stages' outputs into the prompt (pipeline graph).
     upstream: dict[str, str] = {}
     for dep in pipeline.UPSTREAM.get(req.mode, []):
-        de = get_expansion(video_id, dep)
-        if de and getattr(de, "status", "done") == "done" and de.contentMd:
+        # Latest DONE, not latest: a regeneration appends an empty running row,
+        # so reading "latest" drops the predecessor's text and the next stage
+        # generates with no upstream context at all — silently.
+        de = get_latest_done_expansion(video_id, dep)
+        if de and de.contentMd:
             upstream[dep] = de.contentMd
+
+    # External verification exists only on the Claude branch; Ollama has no tools.
+    web_search_available = bool(
+        req.mode == "research"
+        and transcript_edit._is_claude(model)
+        and str(settings.get("research_web_search_enabled", "true")).lower() != "false"
+    )
 
     system, user = local_llm.build_expand_prompt(
         mode=req.mode, video_title=video.title or video_id,
@@ -679,9 +710,20 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         full_brief_md=(essence_block + curated_brief) if use_brief else essence_block,
         transcript_excerpt=transcript_excerpt,
         upstream=upstream,
+        web_search_available=web_search_available,
     )
 
-    # Mark running (preserves any previous content) BEFORE launching the thread.
+    # NOT `or 5`: a configured 0 is a deliberate kill switch ("0 disables" in
+    # store.DEFAULT_SETTINGS) and must reach web_search_tools, which turns it off.
+    # A garbage value falls back to the default instead of 500-ing the endpoint.
+    try:
+        search_max_uses = int(settings.get("research_web_search_max_uses", 5))
+    except (TypeError, ValueError):
+        search_max_uses = 5
+    tools = local_llm.web_search_tools(search_max_uses) if web_search_available else None
+
+    # Append a new empty `running` version BEFORE launching the thread. Previous
+    # versions stay intact as their own rows; this one is filled in on finish.
     start_expansion(
         video_id=video_id, mode=req.mode, source_title=req.section_title,
         source_md=req.section_md, context_mode=ctx_mode, model=model,
@@ -691,7 +733,7 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
         target=_run_expansion_job, daemon=True,
         kwargs={"video_id": video_id, "mode": req.mode, "system": system,
                 "user": user, "model": model, "num_ctx": num_ctx,
-                "temperature": temperature},
+                "temperature": temperature, "tools": tools},
     ).start()
     return {"status": "running", "mode": req.mode, "context_mode": ctx_mode}
 
@@ -703,6 +745,9 @@ def _expansion_to_dict(e) -> dict:
         "id": e.id,
         "video_id": e.videoId,
         "mode": e.mode,
+        "version": e.version,
+        "from_version": e.fromVersion,
+        "verdict": getattr(e, "verdict", None),
         "source_title": e.sourceTitle,
         "source_md": e.sourceMd,
         "context_mode": e.contextMode,
@@ -763,24 +808,66 @@ def assess_stage(video_id: str, stage: str) -> dict:
     e = get_expansion(video_id, stage)
     if not e or not (e.contentMd or "").strip():
         raise HTTPException(status_code=400, detail="Нет артефакта этапа для оценки")
+    prev = get_stage_gate(video_id, stage)
+    previous_items = json.loads(prev.items) if prev else None
     try:
-        items = pipeline.assess_checklist(stage, e.contentMd)
+        items = pipeline.assess_checklist(stage, e.contentMd, previous=previous_items)
     except Exception as ex:
         raise HTTPException(status_code=502, detail=f"AI-оценка не удалась: {ex}")
     row = upsert_stage_gate(video_id=video_id, stage=stage, items=items, assessed=True)
     return _stage_gate_to_dict(row)
 
 
-# NOTE: the `.pdf` route MUST be declared before the bare `{mode}` route.
-# A path param matches dots, so `{mode}` would otherwise capture "spec.pdf"
-# and shadow this route (Starlette matches in declaration order).
+@app.get("/videos/{video_id}/expansions/{mode}/versions")
+def read_expansion_versions(video_id: str, mode: ExpandMode) -> dict:
+    """Version list for the artifact selector. Bodies are omitted on purpose —
+    the UI fetches one version's text only when the user picks it."""
+    rows = list_expansion_versions(video_id, mode)
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
+    return {
+        "mode": mode,
+        "versions": [{
+            "version": r.version,
+            "model": r.model,
+            "status": getattr(r, "status", "done"),
+            "verdict": getattr(r, "verdict", None),
+            "chars": len(r.contentMd or ""),
+            "elapsed_ms": r.elapsedMs,
+            "created_at": r.createdAt.isoformat(),
+        } for r in rows],
+    }
+
+
+# NOTE: the `.md` and `.pdf` routes MUST be declared before the bare `{mode}`
+# route. A path param matches dots, so `{mode}` would otherwise capture
+# "spec.pdf" and shadow them (Starlette matches in declaration order).
+@app.get("/videos/{video_id}/expansions/{mode}.md")
+def export_expansion_md(video_id: str, mode: ExpandMode):
+    """Markdown counterpart of the PDF export — the artifact's own text.
+
+    The UI has always offered this link next to `.pdf`; without the route the
+    request fell through to the bare `{mode}` handler, where "research.md"
+    fails ExpandMode's Literal validation and the user got a 422 JSON body.
+    """
+    e = get_latest_done_expansion(video_id, mode)
+    if not e:
+        raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
+    return Response(
+        content=e.contentMd or "",
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{mode}-{video_id}.md"'},
+    )
+
+
 @app.get("/videos/{video_id}/expansions/{mode}.pdf")
 def export_expansion_pdf(video_id: str, mode: ExpandMode):
     """Render a saved expansion as a PDF. Available for all modes, but the UI
     only surfaces the button for research/report (ТЗ / AI-артефакты остаются
     markdown — их скармливают обратно в Cursor/Claude)."""
     from export import markdown_to_pdf
-    e = get_expansion(video_id, mode)
+    # Latest DONE: a running/errored newer row has no content to render.
+    e = get_latest_done_expansion(video_id, mode)
     if not e:
         raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
     title_map = {
@@ -797,11 +884,46 @@ def export_expansion_pdf(video_id: str, mode: ExpandMode):
     )
 
 
+@app.get("/videos/{video_id}/skills-bundle.zip")
+def export_skills_bundle(video_id: str):
+    """Skills + MCP scaffold + README as one archive."""
+    import skills_export
+    # Latest DONE throughout: a bundle must be built from finished artifacts only.
+    e = get_latest_done_expansion(video_id, "ai_skills")
+    if not e or not (e.contentMd or "").strip():
+        raise HTTPException(status_code=404, detail="Нет артефакта AI-скиллов")
+    skills = skills_export.parse_skills(e.contentMd)
+    if not skills:
+        raise HTTPException(
+            status_code=400,
+            detail="Не удалось разобрать ни одного скилла — артефакт не соответствует"
+                   " формату «## Скилл N.». Перегенерируй стадию AI-скиллы.",
+        )
+    spec = get_latest_done_expansion(video_id, "spec")
+    algos = get_latest_done_expansion(video_id, "ai_algorithms")
+    video = get_video(video_id)
+    blob = skills_export.build_bundle(
+        skills,
+        spec_md=(spec.contentMd if spec else ""),
+        algorithms_md=(algos.contentMd if algos else ""),
+        video_title=(video.title if video else video_id),
+    )
+    return Response(
+        content=blob,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="skills-{video_id}.zip"'},
+    )
+
+
 @app.get("/videos/{video_id}/expansions/{mode}")
-def read_expansion(video_id: str, mode: ExpandMode) -> dict:
-    e = get_expansion(video_id, mode)
+def read_expansion(video_id: str, mode: ExpandMode, version: int | None = None) -> dict:
+    """Current artifact, or a specific version when `?version=N` is given."""
+    e = (get_expansion_version(video_id, mode, version) if version is not None
+         else get_expansion(video_id, mode))
     if not e:
-        raise HTTPException(status_code=404, detail=f"No '{mode}' expansion for {video_id}")
+        detail = (f"No '{mode}' v{version} for {video_id}" if version is not None
+                  else f"No '{mode}' expansion for {video_id}")
+        raise HTTPException(status_code=404, detail=detail)
     return _expansion_to_dict(e)
 
 
@@ -1220,6 +1342,25 @@ def read_doc_draft(video_id: str, kind: str):
     _require_kind(kind)
     d = get_transcript_draft(video_id, kind)
     return _draft_to_dict(d) if d else None
+
+
+@app.get("/videos/{video_id}/pending-drafts")
+def read_pending_drafts(video_id: str) -> dict:
+    """Drafts that exist but were never applied.
+
+    `_current_doc_text` reads applied TranscriptEdit rows only, so an unapplied
+    draft is invisible to the expand prompt. The UI warns before generating.
+    """
+    out = []
+    for kind in ("transcript", "brief", "essence"):
+        d = get_transcript_draft(video_id, kind)
+        if d and (d.contentMd or "").strip():
+            out.append({
+                "kind": kind,
+                "chars": len(d.contentMd),
+                "updated_at": d.updatedAt.isoformat(),
+            })
+    return {"drafts": out}
 
 
 @app.get("/videos/{video_id}/docs/{kind}/draft/download.pdf")

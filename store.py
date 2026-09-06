@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from prisma import Prisma
+from prisma.errors import UniqueViolationError
 
 # Per-1M-token pricing (USD). Keep in sync with CLAUDE.md + pricing pages.
 _PRICING: dict[str, tuple[float, float]] = {
@@ -489,6 +490,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "local_llm_num_ctx":            32768,             # qwen2.5 native cap; default 2048 truncates brief+transcript
     "local_llm_temperature":        0.3,               # lower = more focused/deterministic specs
     "local_llm_max_transcript_chars": 60000,           # raw transcript clip before stuffing into prompt
+    # Research-stage external verification (Anthropic server-side web search).
+    "research_web_search_enabled":  True,              # off → research degrades to "не проверено"
+    "research_web_search_max_uses": 5,                 # searches per research run; 0 disables
 }
 
 
@@ -546,55 +550,80 @@ def set_settings(updates: dict) -> dict:
 
 # ─── Expansions (local-LLM extended sections) ──────────────────────
 
-async def _upsert_expansion(
-    *, video_id: str, mode: str, source_title: str, source_md: str,
-    context_mode: str, model: str, num_ctx: int,
-    content_md: str, input_chars: int, elapsed_ms: int,
-):
+async def _get_expansion(video_id: str, mode: str):
+    """Current artifact = highest version, whatever its status. An errored
+    latest version must stay visible; the UI relies on seeing it."""
     db = Prisma()
     await db.connect()
     try:
-        return await db.expansion.upsert(
-            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
-            data={
-                "create": {
-                    "videoId": video_id, "mode": mode,
-                    "sourceTitle": source_title, "sourceMd": source_md,
-                    "contextMode": context_mode, "model": model, "numCtx": num_ctx,
-                    "contentMd": content_md, "inputChars": input_chars,
-                    "elapsedMs": elapsed_ms,
-                },
-                "update": {
-                    "sourceTitle": source_title, "sourceMd": source_md,
-                    "contextMode": context_mode, "model": model, "numCtx": num_ctx,
-                    "contentMd": content_md, "inputChars": input_chars,
-                    "elapsedMs": elapsed_ms,
-                },
-            },
+        return await db.expansion.find_first(
+            where={"videoId": video_id, "mode": mode},
+            order={"version": "desc"},
         )
     finally:
         await db.disconnect()
 
 
-async def _get_expansion(video_id: str, mode: str):
+async def _get_latest_done_expansion(video_id: str, mode: str):
+    """Highest version whose generation actually SUCCEEDED, or None.
+
+    Deliberately different from `_get_expansion`: that one returns the highest
+    version whatever its status, because the UI must keep showing a running or
+    errored latest version. Anything that acts on an artifact's *content* — the
+    refuted-verdict hard stop, the PDF export, the skills bundle — needs the last
+    row that has content and a verdict, otherwise starting a regeneration (which
+    appends an empty `running` row with `verdict=NULL`) would silently switch the
+    hard stop off and leave it off if that regeneration failed."""
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.find_first(
+            where={"videoId": video_id, "mode": mode, "status": "done"},
+            order={"version": "desc"},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _get_expansion_version(video_id: str, mode: str, version: int):
     db = Prisma()
     await db.connect()
     try:
         return await db.expansion.find_unique(
-            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+            where={"videoId_mode_version": {
+                "videoId": video_id, "mode": mode, "version": version}},
+        )
+    finally:
+        await db.disconnect()
+
+
+async def _list_expansion_versions(video_id: str, mode: str):
+    db = Prisma()
+    await db.connect()
+    try:
+        return await db.expansion.find_many(
+            where={"videoId": video_id, "mode": mode},
+            order={"version": "desc"},
         )
     finally:
         await db.disconnect()
 
 
 async def _list_expansions(video_id: str):
+    """One row per mode — the current version. The UI pre-fills its modal from
+    this, so older versions must not show up as extra artifacts."""
     db = Prisma()
     await db.connect()
     try:
-        return await db.expansion.find_many(
+        rows = await db.expansion.find_many(
             where={"videoId": video_id},
-            order={"updatedAt": "desc"},
+            order={"version": "desc"},
         )
+        latest: dict[str, Any] = {}
+        for r in rows:
+            if r.mode not in latest:
+                latest[r.mode] = r
+        return sorted(latest.values(), key=lambda r: r.updatedAt, reverse=True)
     finally:
         await db.disconnect()
 
@@ -602,40 +631,55 @@ async def _list_expansions(video_id: str):
 async def _start_expansion(
     *, video_id: str, mode: str, source_title: str, source_md: str,
     context_mode: str, model: str, num_ctx: int, input_chars: int,
+    _max_attempts: int = 5,
 ):
-    """UPSERT status=running. On update, preserve the previous contentMd so the
-    UI keeps showing the old artifact while the new one regenerates."""
+    """Append a new running version. Never overwrites: two clients generating
+    the same mode concurrently produce two versions instead of racing for one
+    row. The read-then-write (max version -> create version+1) is not
+    atomic, so a concurrent caller can create the same next version first;
+    that loses the race with a UniqueViolationError on (videoId, mode,
+    version), which we retry against a fresh read rather than let propagate."""
     db = Prisma()
     await db.connect()
     try:
-        return await db.expansion.upsert(
-            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
-            data={
-                "create": {
-                    "videoId": video_id, "mode": mode, "sourceTitle": source_title,
-                    "sourceMd": source_md, "contextMode": context_mode, "model": model,
-                    "numCtx": num_ctx, "contentMd": "", "inputChars": input_chars,
-                    "elapsedMs": 0, "status": "running", "error": None,
-                },
-                "update": {
+        for attempt in range(_max_attempts):
+            last = await db.expansion.find_first(
+                where={"videoId": video_id, "mode": mode}, order={"version": "desc"},
+            )
+            version = (last.version + 1) if last else 1
+            try:
+                return await db.expansion.create(data={
+                    "videoId": video_id, "mode": mode, "version": version,
+                    "fromVersion": last.version if last else None,
                     "sourceTitle": source_title, "sourceMd": source_md,
                     "contextMode": context_mode, "model": model, "numCtx": num_ctx,
-                    "inputChars": input_chars, "status": "running", "error": None,
-                },
-            },
-        )
+                    "contentMd": "", "inputChars": input_chars, "elapsedMs": 0,
+                    "status": "running", "error": None,
+                })
+            except UniqueViolationError:
+                if attempt == _max_attempts - 1:
+                    raise
+                continue
     finally:
         await db.disconnect()
 
 
-async def _finish_expansion(*, video_id: str, mode: str, content_md: str, elapsed_ms: int):
+async def _finish_expansion(
+    *, video_id: str, mode: str, content_md: str, elapsed_ms: int,
+    verdict: str | None = None,
+):
     db = Prisma()
     await db.connect()
     try:
+        last = await db.expansion.find_first(
+            where={"videoId": video_id, "mode": mode}, order={"version": "desc"},
+        )
+        if not last:
+            return None
         return await db.expansion.update(
-            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+            where={"id": last.id},
             data={"contentMd": content_md, "elapsedMs": elapsed_ms,
-                  "status": "done", "error": None},
+                  "status": "done", "error": None, "verdict": verdict},
         )
     finally:
         await db.disconnect()
@@ -645,8 +689,13 @@ async def _fail_expansion(*, video_id: str, mode: str, error: str):
     db = Prisma()
     await db.connect()
     try:
+        last = await db.expansion.find_first(
+            where={"videoId": video_id, "mode": mode}, order={"version": "desc"},
+        )
+        if not last:
+            return None
         return await db.expansion.update(
-            where={"videoId_mode": {"videoId": video_id, "mode": mode}},
+            where={"id": last.id},
             data={"status": "error", "error": error[:2000]},
         )
     finally:
@@ -664,10 +713,6 @@ async def _sweep_running_expansions() -> int:
         )
     finally:
         await db.disconnect()
-
-
-def upsert_expansion(**kwargs):
-    return asyncio.run(_upsert_expansion(**kwargs))
 
 
 def start_expansion(**kwargs):
@@ -688,6 +733,18 @@ def sweep_running_expansions() -> int:
 
 def get_expansion(video_id: str, mode: str):
     return asyncio.run(_get_expansion(video_id, mode))
+
+
+def get_latest_done_expansion(video_id: str, mode: str):
+    return asyncio.run(_get_latest_done_expansion(video_id, mode))
+
+
+def get_expansion_version(video_id: str, mode: str, version: int):
+    return asyncio.run(_get_expansion_version(video_id, mode, version))
+
+
+def list_expansion_versions(video_id: str, mode: str):
+    return asyncio.run(_list_expansion_versions(video_id, mode))
 
 
 def list_expansions(video_id: str):

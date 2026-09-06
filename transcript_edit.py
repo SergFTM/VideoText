@@ -111,17 +111,25 @@ def _is_claude(model: str) -> bool:
     return m.startswith("claude") or m in brief._MODEL_ALIASES
 
 
-def _stream_claude(system: str, user: str, model: str) -> Iterator[str]:
-    """Stream text deltas from Claude. System prompt is prompt-cached."""
+def _stream_claude(system: str, user: str, model: str, tools: list[dict] | None = None) -> Iterator[str]:
+    """Stream text deltas from Claude. System prompt is prompt-cached.
+
+    `tools` carries Anthropic server-side tools (currently web search). The search
+    loop runs at Anthropic; `text_stream` still yields only text deltas, so callers
+    see the same contract with or without tools.
+    """
     import anthropic
     client = anthropic.Anthropic()
     resolved = brief.resolve_model(model or None)
-    with client.messages.stream(
-        model=resolved,
-        max_tokens=16000,  # full-text rewrites of ~20K-char transcripts
-        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": user}],
-    ) as stream:
+    kwargs = {
+        "model": resolved,
+        "max_tokens": 16000,  # full-text rewrites of ~20K-char transcripts
+        "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        "messages": [{"role": "user", "content": user}],
+    }
+    if tools:
+        kwargs["tools"] = tools
+    with client.messages.stream(**kwargs) as stream:
         for text in stream.text_stream:
             yield text
 
