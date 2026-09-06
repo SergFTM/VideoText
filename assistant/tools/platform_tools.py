@@ -179,11 +179,13 @@ def get_recent_errors(minutes: int = 60, limit: int = 20) -> dict:
 
 def list_active_streams() -> dict:
     """Currently active/paused live streams with chunk counts."""
+    # store.list_streams returns Prisma LiveStream models, not dicts — camelCase
+    # attributes, and `chunks` is the included relation rather than a count field.
     streams = store.list_streams(status="active") + store.list_streams(status="paused")
     return _ok([
         {
-            "id": s["id"], "url": s["url"], "channel": s["channel_name"],
-            "status": s["status"], "chunks": s.get("chunks_count", 0),
+            "id": s.id, "url": s.url, "channel": s.channelName,
+            "status": s.status, "chunks": len(s.chunks or []),
         }
         for s in streams
     ])
@@ -194,9 +196,10 @@ def list_news_items(status: str = "draft", limit: int = 30) -> dict:
     items = store.list_news_items(status=status, limit=limit)
     return _ok([
         {
-            "id": i["id"], "headline": i["headline"], "category": i.get("category"),
-            "confidence": i.get("confidence"), "status": i["status"],
-            "created_at": i.get("created_at"), "stream_id": i.get("stream_id"),
+            "id": i.id, "headline": i.headline, "category": i.category,
+            "confidence": i.confidence, "status": i.status,
+            "created_at": i.createdAt.isoformat() if i.createdAt else None,
+            "stream_id": i.streamId,
         }
         for i in items
     ])

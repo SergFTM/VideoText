@@ -168,6 +168,9 @@ def assess_checklist(stage: str, artifact_md: str, model: str | None = None,
         system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
     )
+    # Truncated JSON used to fall through to {} — every criterion then read as
+    # failed, indistinguishable from a genuinely incomplete artifact.
+    brief.raise_if_truncated(msg, "AI-оценка чеклиста")
     text = next((b.text for b in msg.content if b.type == "text"), "{}")
     try:
         raw = json.loads(text)

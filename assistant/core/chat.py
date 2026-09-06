@@ -11,6 +11,7 @@ read the result, then call another tool, then finally answer.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -22,6 +23,18 @@ from prisma import Prisma
 from assistant.core.cache import find_cached_answer, save_qa
 from assistant.core.context_builder import build_context
 from assistant.core.tools_runtime import execute, openai_schema, anthropic_schema, registry
+
+
+async def _execute_off_loop(fn, *args, **kwargs):
+    """Run a synchronous callable on a worker thread.
+
+    Every store.* wrapper is `asyncio.run(...)` under the hood, which raises
+    RuntimeError when called from inside a running loop. Tool handlers are
+    synchronous and were being invoked straight from the async provider loops,
+    so every database-backed tool failed — silently, because execute() catches
+    the exception and returns it as a tool error the model then apologises for.
+    """
+    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 SYSTEM_PROMPT_BASE = """Ты — встроенный AI-ассистент приложения VideoText.
@@ -172,8 +185,14 @@ class Assistant:
           {"type": "done", "usage": {...}, "cost_usd": ...}
           {"type": "error", "msg": ...}
         """
-        # 1. Cache lookup
-        if self.use_cache:
+        # 1. Cache lookup.
+        # An item-scoped question must never be answered from the shared cache:
+        # entries are keyed on question text alone, so "улучши заголовок" on
+        # item 42 and on item 43 score ~0.98 similarity and collide. One
+        # production row (`expand_text on item 57`) had usedCount=5 — five
+        # different items served one another's answer.
+        item_scoped = bool((ui_context or {}).get("item_id"))
+        if self.use_cache and not item_scoped:
             persona_name = self.persona.name if self.persona else "platform"
             cached = await find_cached_answer(db, question, persona=persona_name, threshold=self.cache_threshold)
             if cached:
@@ -276,7 +295,8 @@ class Assistant:
                         args = {**args, "confirm": True}
 
                 yield {"type": "tool_call", "name": name, "args": args}
-                result = execute(name, args, self.persona) if self.persona else {"ok": False, "error": "no persona"}
+                result = (await _execute_off_loop(execute, name, args, self.persona)
+                          if self.persona else {"ok": False, "error": "no persona"})
                 yield {"type": "tool_result", "name": name, "result": result}
 
                 messages.append({
@@ -343,7 +363,8 @@ class Assistant:
                     if td and td.is_write:
                         args = {**args, "confirm": True}
                 yield {"type": "tool_call", "name": name, "args": args}
-                result = execute(name, args, self.persona) if self.persona else {"ok": False, "error": "no persona"}
+                result = (await _execute_off_loop(execute, name, args, self.persona)
+                          if self.persona else {"ok": False, "error": "no persona"})
                 yield {"type": "tool_result", "name": name, "result": result}
                 tool_results.append({
                     "type": "tool_result",
@@ -365,10 +386,13 @@ class Assistant:
     # ─── Ollama path (no native tool-use) ─────────────────────────────
 
     async def _run_ollama(self, messages: list[dict]):
-        import aiohttp
-        endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
+        # httpx, not aiohttp: aiohttp is neither installed nor in requirements,
+        # so this whole branch raised ModuleNotFoundError. OLLAMA_URL, not
+        # OLLAMA_ENDPOINT: every other component in the project reads the former.
+        import httpx
+        endpoint = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 
-        async with aiohttp.ClientSession() as http:
+        async with httpx.AsyncClient(timeout=120) as http:
             payload = {
                 "model": self.model,
                 "messages": messages,
@@ -376,8 +400,9 @@ class Assistant:
             }
             final_parts: list[str] = []
             try:
-                async with http.post(f"{endpoint}/api/chat", json=payload, timeout=120) as resp:
-                    async for line in resp.content:
+                async with http.stream("POST", f"{endpoint}/api/chat", json=payload) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
                         if not line:
                             continue
                         try:
