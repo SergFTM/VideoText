@@ -241,3 +241,47 @@ def test_bundle_without_algorithms_is_still_valid():
         assert "def list_skills()" in src
         assert "NotImplementedError" not in src
         assert "Алгоритмы не найдены" in src
+
+
+# ─── Heading tolerance parity with the algorithms parser ───────────
+# _ALGO_RE was widened to accept 1-3 '#' and .:) after the number; _SKILL_RE was
+# left requiring exactly '##' and a literal period. Measured against the live DB
+# that cost 15 of 44 videos a 400 on the bundle endpoint — the colon form
+# "## Скилл 1:" is what models actually emit most often.
+
+def test_skills_parser_accepts_colon_form():
+    md = "## Скилл 1: Проверка данных\n\n**Slug:** data-check\n\nтело\n"
+    s = skills_export.parse_skills(md)
+    assert len(s) == 1
+    assert s[0]["title"] == "Проверка данных"
+    assert s[0]["slug"] == "data-check"
+
+
+def test_skills_parser_accepts_h1_and_h3_and_paren():
+    for head in ("# Скилл 1. Альфа", "### Скилл 1) Альфа", "### Скилл 1: Альфа"):
+        s = skills_export.parse_skills(f"{head}\n\nтело\n")
+        assert len(s) == 1, f"не распознан заголовок: {head}"
+        assert s[0]["title"] == "Альфа"
+
+
+def test_skills_parser_still_rejects_prose_and_deep_headings():
+    assert skills_export.parse_skills("Смотри Скилл 1. выше по тексту\n") == []
+    assert skills_export.parse_skills("#### Скилл 1. Слишком глубоко\n") == []
+
+
+def test_skills_parser_ignores_heading_inside_fence():
+    md = ("## Скилл 1. Настоящий\n\n**Slug:** real\n\n"
+          "```\n## Скилл 2: Ненастоящий\n```\n\nхвост\n")
+    s = skills_export.parse_skills(md)
+    assert len(s) == 1
+    assert "Ненастоящий" in s[0]["body"]
+
+
+def test_bundle_pins_mcp_below_2():
+    """mcp>=1.2.0 resolves to 2.x, where FastMCP was renamed — the README's
+    install step then fails with ModuleNotFoundError."""
+    blob = skills_export.build_bundle(
+        skills_export.parse_skills("## Скилл 1. А\n\n**Slug:** a\n\nтело\n"),
+        spec_md="", algorithms_md="", video_title="T")
+    req = zipfile.ZipFile(io.BytesIO(blob)).read("mcp_server/requirements.txt").decode()
+    assert "<2" in req, f"mcp не запинен ниже 2.x: {req!r}"

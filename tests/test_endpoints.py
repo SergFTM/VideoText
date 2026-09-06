@@ -11,27 +11,25 @@ async def test_legacy_assistant_chat_removed():
         assert r.status_code == 404, f"legacy alias should be gone, got {r.status_code}"
 
 
-@pytest.mark.asyncio
-async def test_chat_platform_registered():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.post("/chat/platform", json={"question": "x"})
-        assert r.status_code != 404, f"/chat/platform missing: {r.status_code}"
+# These three assert route REGISTRATION, which is all their names ever claimed.
+# They used to prove it by firing a real request without the `db` fixture, so
+# they hit the database named in .env — the user's PRODUCTION one. The apply
+# test wrote {"item_id": 1, "field": "headline", "value": "x"} and permanently
+# destroyed the headline of a real news item; the other two appended a garbage
+# "x" row to the live assistant cache on every single run. Checking app.routes
+# proves the same thing with no side effects, and matches the pattern the rest
+# of this file already uses (see test_transcript_routes_registered below).
+
+def test_chat_platform_registered():
+    assert "/chat/platform" in {r.path for r in app.routes}
 
 
-@pytest.mark.asyncio
-async def test_chat_editor_registered():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.post("/chat/editor", json={"question": "x", "item_id": 1})
-        assert r.status_code != 404, f"/chat/editor missing: {r.status_code}"
+def test_chat_editor_registered():
+    assert "/chat/editor" in {r.path for r in app.routes}
 
 
-@pytest.mark.asyncio
-async def test_chat_editor_apply_registered():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.post("/chat/editor/apply", json={
-            "item_id": 1, "field": "headline", "value": "x", "tool_call_id": "abc",
-        })
-        assert r.status_code != 404, f"/chat/editor/apply missing: {r.status_code}"
+def test_chat_editor_apply_registered():
+    assert "/chat/editor/apply" in {r.path for r in app.routes}
 
 
 @pytest.mark.asyncio

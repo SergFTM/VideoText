@@ -689,8 +689,11 @@ def expand_spec(video_id: str, req: ExpandSpecRequest) -> dict:
     # Передача: feed predecessor stages' outputs into the prompt (pipeline graph).
     upstream: dict[str, str] = {}
     for dep in pipeline.UPSTREAM.get(req.mode, []):
-        de = get_expansion(video_id, dep)
-        if de and getattr(de, "status", "done") == "done" and de.contentMd:
+        # Latest DONE, not latest: a regeneration appends an empty running row,
+        # so reading "latest" drops the predecessor's text and the next stage
+        # generates with no upstream context at all — silently.
+        de = get_latest_done_expansion(video_id, dep)
+        if de and de.contentMd:
             upstream[dep] = de.contentMd
 
     # External verification exists only on the Claude branch; Ollama has no tools.

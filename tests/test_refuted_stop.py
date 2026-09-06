@@ -172,3 +172,63 @@ async def test_latest_done_is_none_when_nothing_finished(db):
     await _seed(db)
     await _start("vidR")
     assert await store._get_latest_done_expansion("vidR", "report") is None
+
+
+# ─── Upstream context must come from the latest COMPLETED version ──
+# expand_spec was the one content-consuming call left on get_expansion after the
+# commit that moved the others to get_latest_done_expansion. A regeneration
+# appends an empty running row, so reading "latest" made the next stage generate
+# with NO upstream context — silently, no warning, no error.
+
+def test_upstream_context_comes_from_latest_done(monkeypatch):
+    import server
+
+    class _Done:
+        status, contentMd, verdict = "done", "РЕСЕРЧ-ТЕКСТ", None
+
+    asked = []
+
+    def fake_latest_done(video_id, mode):
+        asked.append(mode)
+        return _Done() if mode == "research" else None
+
+    monkeypatch.setattr(server, "get_latest_done_expansion", fake_latest_done)
+    # What a regeneration leaves behind: an empty running row as the newest.
+    monkeypatch.setattr(server, "get_expansion", lambda v, m: None)
+
+    captured = {}
+    orig_build = server.local_llm.build_expand_prompt
+
+    def spy(**kw):
+        captured["upstream"] = kw.get("upstream")
+        return orig_build(**kw)
+
+    monkeypatch.setattr(server.local_llm, "build_expand_prompt", spy)
+
+    class _Brief:
+        contentJson = None
+
+    class _Video:
+        id, title, segments = "vid1", "T", []
+        briefs = [_Brief()]
+
+    monkeypatch.setattr(server, "get_video", lambda *a, **k: _Video())
+    monkeypatch.setattr(server, "_current_doc_text", lambda v, k: "")
+    monkeypatch.setattr(server, "get_all_settings", lambda: {})
+    monkeypatch.setattr(server, "start_expansion", lambda **kw: None)
+    # Neuter the job body, NOT threading itself — FastAPI runs sync endpoints on
+    # a threadpool, so patching threading.Thread deadlocks the test client.
+    monkeypatch.setattr(server, "_run_expansion_job", lambda **kw: None)
+
+    # A distinct video id on purpose: earlier tests in this file leak their
+    # (video, mode) key into _expansion_jobs — the very defect this suite has
+    # not fixed yet — and a leaked key short-circuits the request to
+    # {"already": true} before any prompt is built.
+    from fastapi.testclient import TestClient
+    r = TestClient(server.app, raise_server_exceptions=False).post(
+        "/videos/vid-upstream/expand-spec", json={"mode": "report"})
+
+    assert r.status_code == 200, r.text
+    assert asked == ["research"], f"upstream читался не через latest-done: {asked}"
+    assert captured.get("upstream", {}).get("research") == "РЕСЕРЧ-ТЕКСТ"
+    server._expansion_jobs.discard(("vid-upstream", "report"))

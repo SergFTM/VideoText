@@ -18,7 +18,7 @@ import keyword
 import re
 import zipfile
 
-_SKILL_RE = re.compile(r"^##\s+Скилл\s+\d+\.\s*(.+?)\s*$", re.MULTILINE)
+_SKILL_RE = re.compile(r"^#{1,3}\s+Скилл\s+\d+[.:)]\s*(.+?)\s*$", re.MULTILINE)
 _ALGO_RE = re.compile(r"^#{1,3}\s+Алгоритм\s+\d+[.:)]\s*(.+?)\s*$", re.MULTILINE)
 _SLUG_RE = re.compile(r"^\*\*Slug:\*\*\s*`?([a-z0-9][a-z0-9-]*)`?\s*$", re.MULTILINE)
 _DESC_RE = re.compile(r"^\*\*Описание:\*\*\s*(.+?)\s*$", re.MULTILINE)
@@ -296,6 +296,8 @@ def build_bundle(skills: list[dict], *, spec_md: str = "", algorithms_md: str = 
             zf.writestr(f"skills/{s['slug']}/SKILL.md", _skill_md(s))
         zf.writestr("mcp_server/server.py",
                     _mcp_server_py(skills, parse_algorithms(algorithms_md)))
-        zf.writestr("mcp_server/requirements.txt", "mcp>=1.2.0\n")
+        # Upper bound is load-bearing: mcp 2.x renamed FastMCP, so an unpinned
+        # install makes the README's own start command fail with ImportError.
+        zf.writestr("mcp_server/requirements.txt", "mcp>=1.2.0,<2\n")
         zf.writestr("README.md", _readme(video_title, skills, spec_md, algorithms_md))
     return buf.getvalue()
