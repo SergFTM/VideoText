@@ -72,6 +72,14 @@ async def _start_stream_workers(stream_id: str, url: str, interval_min: int) -> 
             )
             import traceback
             traceback.print_exc(file=sys.stderr)
+        finally:
+            # capture_loop also returns normally after giving up on 5 consecutive
+            # failures. Leaving the key here made active_stream_ids() report a
+            # dead recording as live, so the UI showed a green dot forever.
+            if _stream_tasks.get(stream_id, {}).get("stop_event") is stop:
+                _stream_tasks.pop(stream_id, None)
+                print(f"[orchestrator] capture for {stream_id} is no longer active",
+                      file=sys.stderr)
 
     task = asyncio.create_task(_wrapped(), name=f"capture:{stream_id}")
     _stream_tasks[stream_id] = {"task": task, "stop_event": stop}
@@ -90,20 +98,44 @@ async def _stop_stream_workers(stream_id: str) -> None:
     print(f"[orchestrator] stopped capture for {stream_id}", file=sys.stderr)
 
 
+async def _sleep_or_stop(seconds: float) -> None:
+    """Back off, but wake immediately if the server is shutting down."""
+    assert _global_stop is not None
+    try:
+        await asyncio.wait_for(_global_stop.wait(), timeout=seconds)
+    except asyncio.TimeoutError:
+        pass
+
+
 async def _transcribe_worker() -> None:
     """Pulls `status=pending` chunks, transcribes, writes text back."""
     assert _global_stop is not None
     while not _global_stop.is_set():
-        pending = await asyncio.to_thread(get_pending_chunks, "pending", 1)
+        # The poll and the chunk.stream access below sit OUTSIDE the inner try
+        # that guards transcription. An error here used to escape the while loop
+        # and kill this task for the life of the process — silently, because the
+        # task is held in a module global and so is never garbage-collected,
+        # which is what would otherwise print "Task exception was never retrieved".
+        try:
+            pending = await asyncio.to_thread(get_pending_chunks, "pending", 1)
+        except Exception as e:
+            print(f"[transcribe] poll failed, retrying: {e}", file=sys.stderr)
+            await _sleep_or_stop(5)
+            continue
         if not pending:
             try:
                 await asyncio.wait_for(_global_stop.wait(), timeout=3)
             except asyncio.TimeoutError:
                 pass
             continue
-        chunk = pending[0]
-        stream = chunk.stream
-        model_name = stream.whisperModel if stream else "medium"
+        try:
+            chunk = pending[0]
+            stream = chunk.stream
+            model_name = stream.whisperModel if stream else "medium"
+        except Exception as e:
+            print(f"[transcribe] bad chunk row, skipping: {e}", file=sys.stderr)
+            await _sleep_or_stop(5)
+            continue
         try:
             result = await transcribe_file(chunk.audioPath, model_name=model_name)
             await asyncio.to_thread(
@@ -171,15 +203,25 @@ async def _extract_worker() -> None:
     """Pulls `status=transcribed` chunks, calls Claude, writes NewsItems."""
     assert _global_stop is not None
     while not _global_stop.is_set():
-        pending = await asyncio.to_thread(get_pending_chunks, "transcribed", 1)
+        try:
+            pending = await asyncio.to_thread(get_pending_chunks, "transcribed", 1)
+        except Exception as e:
+            print(f"[extract] poll failed, retrying: {e}", file=sys.stderr)
+            await _sleep_or_stop(5)
+            continue
         if not pending:
             try:
                 await asyncio.wait_for(_global_stop.wait(), timeout=3)
             except asyncio.TimeoutError:
                 pass
             continue
-        chunk = pending[0]
-        stream = chunk.stream
+        try:
+            chunk = pending[0]
+            stream = chunk.stream
+        except Exception as e:
+            print(f"[extract] bad chunk row, skipping: {e}", file=sys.stderr)
+            await _sleep_or_stop(5)
+            continue
         if not stream:
             await asyncio.to_thread(update_chunk, chunk.id, status="failed", error="stream missing")
             continue
